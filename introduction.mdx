@@ -1,0 +1,68 @@
+---
+title: "Welcome to Axiom"
+description: "A collaborative human annotation platform for building high-quality labeled datasets with custom schemas and AI-powered quality control."
+---
+
+Axiom is a general-purpose human annotation platform built for collaborative data labeling. Researchers and developers create custom annotation projects, define flexible schemas, upload datasets, and collect structured labels from human annotators — all in one place.
+
+An integrated AI module powered by the Claude API automatically flags items where annotators disagree, helping you catch quality issues before they affect your training data.
+
+<CardGroup cols={2}>
+  <Card title="Quickstart" icon="rocket" href="/quickstart">
+    Get Axiom running in minutes with Docker Compose
+  </Card>
+  <Card title="Deployment" icon="server" href="/deployment">
+    Configure environment variables and run in production
+  </Card>
+  <Card title="Core Concepts" icon="book" href="/concepts/roles">
+    Understand roles, projects, schemas, and annotation flows
+  </Card>
+  <Card title="API Reference" icon="code" href="/api/auth">
+    Explore the full REST API
+  </Card>
+</CardGroup>
+
+## What Axiom does
+
+Axiom brings together every part of the annotation workflow in a single platform:
+
+- **For requesters** — Create projects, define annotation schemas, upload datasets, enroll annotators, monitor progress, and export labeled data.
+- **For annotators** — Work through assigned tasks sequentially, submit structured labels via dynamic forms, and review your annotation history.
+- **For quality control** — Automatically detect disagreement between annotators using inter-annotator agreement scores and AI-powered flagging.
+
+## Key features
+
+<CardGroup cols={2}>
+  <Card title="Custom schema builder" icon="sliders" href="/concepts/schemas">
+    Define Likert scales, boolean toggles, free text, and multi-select fields per project
+  </Card>
+  <Card title="AI flagging" icon="flag" href="/features/ai-flagging">
+    Claude API analyzes divergent annotations and provides written rationale
+  </Card>
+  <Card title="Agreement scoring" icon="chart-bar" href="/features/agreement-scores">
+    Compute per-field inter-annotator agreement across your entire dataset
+  </Card>
+  <Card title="JSON export" icon="download" href="/features/export">
+    Export flattened annotations with AI flags ready for ML training pipelines
+  </Card>
+</CardGroup>
+
+## How it works
+
+<Steps>
+  <Step title="Create a project">
+    A requester creates an annotation project with a title, description, deadline, and minimum annotations per item.
+  </Step>
+  <Step title="Define a schema">
+    Add annotation fields to the project — Likert scales, yes/no questions, free text, or multi-select options. Schemas are locked once the project moves out of draft.
+  </Step>
+  <Step title="Upload your dataset">
+    Upload a JSON file containing items to annotate. Items can include text, image URLs, or any structured data.
+  </Step>
+  <Step title="Assign and annotate">
+    Enroll annotators, trigger round-robin task assignment, and let annotators work through items sequentially in a dynamic form.
+  </Step>
+  <Step title="Analyze and export">
+    Review inter-annotator agreement, inspect AI-flagged items, and export the final labeled dataset as JSON.
+  </Step>
+</Steps>

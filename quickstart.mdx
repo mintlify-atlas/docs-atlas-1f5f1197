@@ -1,80 +1,130 @@
 ---
 title: "Quickstart"
-description: "Start building awesome documentation in minutes"
+description: "Get Axiom running locally in minutes"
 ---
 
-## Get started in three steps
+Get Axiom up and running on your machine with Docker Compose. The entire stack — frontend, backend, and database — starts with a single command.
 
-Get your documentation site running locally and make your first customization.
+## Prerequisites
 
-### Step 1: Set up your local environment
+You need the following tools installed before you begin:
 
-<AccordionGroup>
-  <Accordion icon="copy" title="Clone your docs locally">
-    During the onboarding process, you created a GitHub repository with your docs content if you didn't already have one. You can find a link to this repository in your [dashboard](https://dashboard.mintlify.com).
-    
-    To clone the repository locally so that you can make and preview changes to your docs, follow the [Cloning a repository](https://docs.github.com/en/repositories/creating-and-managing-repositories/cloning-a-repository) guide in the GitHub docs.
-  </Accordion>
-  <Accordion icon="rectangle-terminal" title="Start the preview server">
-    1. Install the Mintlify CLI: `npm i -g mint`
-    2. Navigate to your docs directory and run: `mint dev`
-    3. Open `http://localhost:3000` to see your docs live!
-    
-    <Tip>Your preview updates automatically as you edit files.</Tip>
-  </Accordion>
-</AccordionGroup>
+- **Docker** — [Install Docker](https://docs.docker.com/get-docker/)
+- **Docker Compose** — included with Docker Desktop; verify with `docker compose version`
 
-### Step 2: Deploy your changes
+<Tip>
+  On macOS, you can use [Colima](https://github.com/abiosoft/colima) as a lightweight Docker runtime alternative to Docker Desktop.
+</Tip>
 
-<AccordionGroup>
-  <Accordion icon="github" title="Install our GitHub app">
-    Install the Mintlify GitHub app from your [dashboard](https://dashboard.mintlify.com/settings/organization/github-app).
-    
-    Our GitHub app automatically deploys your changes to your docs site, so you don't need to manage deployments yourself.
-</Accordion>
-<Accordion icon="palette" title="Update your site name and colors">
-    For a first change, let's update the name and colors of your docs site.
+## Setup
 
-    1. Open `docs.json` in your editor.
-    2. Change the `"name"` field to your project name.
-    3. Update the `"colors"` to match your brand.
-    4. Save and see your changes instantly at `http://localhost:3000`.
+<Steps>
+  <Step title="Clone the repository">
+    Clone the Axiom repository and navigate into it:
 
-    <Tip>Try changing the primary color to see an immediate difference!</Tip>
-  </Accordion>
-</AccordionGroup>
+    ```bash
+    git clone https://github.com/invi-bhagyesh/axiom.git
+    cd axiom
+    ```
+  </Step>
 
-### Step 3: Go live
+  <Step title="Create your .env file">
+    Create a `.env` file in the project root. The only variable you need to set manually is your Claude API key for AI flagging. All other values have working defaults.
 
-<Accordion icon="rocket" title="Publish your docs">
-  1. Commit and push your changes.
-  2. Your docs will update and be live in moments!
-</Accordion>
+    ```bash .env
+    CLAUDE_API_KEY=sk-ant-...
+    ```
+
+    <Note>
+      `CLAUDE_API_KEY` is optional. Without it, the AI flagging feature is disabled, but all other annotation functionality works normally.
+    </Note>
+  </Step>
+
+  <Step title="Build and start the services">
+    Build the images and start all three services:
+
+    ```bash
+    docker-compose up --build
+    ```
+
+    Docker Compose starts MySQL first, waits for it to pass its health check, then starts the backend, and finally the frontend. The first build takes a few minutes to download base images and install dependencies.
+
+    <Tip>
+      On subsequent runs, omit `--build` to skip the rebuild step: `docker-compose up`
+    </Tip>
+  </Step>
+
+  <Step title="Access the application">
+    Once all containers are running, open the following URLs in your browser:
+
+    | Service     | URL                          |
+    | ----------- | ---------------------------- |
+    | Frontend    | http://localhost:3000        |
+    | Backend API | http://localhost:8000/docs   |
+    | MySQL       | localhost:3306               |
+
+    The interactive API documentation at `http://localhost:8000/docs` is generated automatically by FastAPI and lets you explore and test every endpoint directly from the browser.
+  </Step>
+
+  <Step title="Application is ready">
+    The database schema and stored procedures are loaded automatically on first start via the MySQL Docker entrypoint. Once all containers are healthy, you can register accounts at `http://localhost:3000/register`.
+  </Step>
+</Steps>
+
+## Demo accounts
+
+The README lists these demo credentials for use after manually seeding the database. You can register these accounts through the `/register` page or create your own:
+
+| Email            | Password      | Role       |
+| ---------------- | ------------- | ---------- |
+| demo@axiom.dev   | password123   | Requester  |
+| ann1@axiom.dev   | password123   | Annotator  |
+| ann2@axiom.dev   | password123   | Annotator  |
+| ann3@axiom.dev   | password123   | Annotator  |
+
+## First workflow
+
+Log in as the demo requester to explore the platform end to end.
+
+<Steps>
+  <Step title="Log in as the requester">
+    Go to http://localhost:3000 and sign in with `demo@axiom.dev` / `password123`.
+
+    Axiom redirects you to the requester dashboard, which shows all your projects and their completion status.
+  </Step>
+
+  <Step title="Explore the dashboard">
+    The dashboard displays each project as a card with a progress ring, task counts, and a flagged-items indicator. You can see projects in **draft**, **active**, and **completed** states.
+  </Step>
+
+  <Step title="Open a project">
+    Click any project to open the project hub. It has five tabs:
+
+    - **Overview** — status, deadline, and summary stats
+    - **Schema** — the annotation fields defined for this project
+    - **Data** — uploaded datasets and their items
+    - **Annotators** — enrolled annotators, task assignment, and workload view
+    - **Results** — inter-annotator agreement scores, AI-flagged items, and the export button
+  </Step>
+
+  <Step title="Try annotating">
+    Log out and sign in as `ann1@axiom.dev`. The annotator view shows a task queue grouped by project. Open a task to see the dynamic annotation form and submit a response.
+  </Step>
+</Steps>
 
 ## Next steps
 
-Now that you have your docs running, explore these key features:
-
 <CardGroup cols={2}>
-
-<Card title="Write Content" icon="pen-to-square" href="/essentials/markdown">
-  Learn MDX syntax and start writing your documentation.
-</Card>
-
-<Card title="Customize style" icon="palette" href="/essentials/settings">
-  Make your docs match your brand perfectly.
-</Card>
-
-<Card title="Add code examples" icon="square-code" href="/essentials/code">
-  Include syntax-highlighted code blocks.
-</Card>
-
-<Card title="API documentation" icon="code" href="/api-reference/introduction">
-  Auto-generate API docs from OpenAPI specs.
-</Card>
-
+  <Card title="Deployment" icon="server" href="/deployment">
+    Configure environment variables and understand the Docker Compose services
+  </Card>
+  <Card title="Core concepts" icon="book" href="/concepts/roles">
+    Learn about roles, projects, schemas, and the annotation flow
+  </Card>
+  <Card title="AI flagging" icon="flag" href="/features/ai-flagging">
+    Set up Claude API integration for automatic divergence detection
+  </Card>
+  <Card title="API reference" icon="code" href="/api/auth">
+    Explore the full REST API
+  </Card>
 </CardGroup>
-
-<Note>
-  **Need help?** See our [full documentation](https://mintlify.com/docs) or join our [community](https://mintlify.com/community).
-</Note>

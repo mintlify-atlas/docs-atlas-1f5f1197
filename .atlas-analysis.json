@@ -1,0 +1,126 @@
+{
+  "projectType": "saas",
+  "projectName": "Axiom",
+  "projectDescription": "A collaborative human annotation platform where requesters create custom data labeling projects with dynamic schemas, enroll annotators, and leverage AI-powered quality control to build reliable training datasets.",
+  "theme": "luma",
+  "primaryColor": "#00d4ff",
+  "lightColor": null,
+  "darkColor": null,
+  "navigation": {
+    "tabs": [
+      {
+        "tab": "Documentation",
+        "groups": [
+          {
+            "group": "Get Started",
+            "pages": [
+              "introduction",
+              "quickstart",
+              "deployment"
+            ]
+          },
+          {
+            "group": "Core Concepts",
+            "pages": [
+              "concepts/roles",
+              "concepts/projects",
+              "concepts/schemas",
+              "concepts/annotation-flow"
+            ]
+          },
+          {
+            "group": "Features",
+            "pages": [
+              "features/task-assignment",
+              "features/ai-flagging",
+              "features/agreement-scores",
+              "features/export"
+            ]
+          },
+          {
+            "group": "Database",
+            "pages": [
+              "database/schema",
+              "database/stored-procedures"
+            ]
+          }
+        ]
+      },
+      {
+        "tab": "API Reference",
+        "groups": [
+          {
+            "group": "Authentication",
+            "pages": [
+              "api/auth"
+            ]
+          },
+          {
+            "group": "Projects & Schema",
+            "pages": [
+              "api/projects",
+              "api/schema",
+              "api/datasets"
+            ]
+          },
+          {
+            "group": "Annotation",
+            "pages": [
+              "api/annotators",
+              "api/tasks"
+            ]
+          },
+          {
+            "group": "Quality & Export",
+            "pages": [
+              "api/agreement",
+              "api/export"
+            ]
+          }
+        ]
+      }
+    ]
+  },
+  "keyFeatures": [
+    "Custom schema builder with Likert, boolean, free-text, and multi-select field types",
+    "Dynamic annotation form renderer driven by JSON schema definitions at runtime",
+    "Sequential annotation flow with auto-advance and per-project progress tracking",
+    "Round-robin task assignment via stored procedure distributing items across annotators",
+    "Inter-annotator agreement scoring computed per field using stored procedures",
+    "AI flagging pipeline powered by Claude API to detect and explain annotator divergence",
+    "JSON export of flattened annotations with AI flags for ML training pipelines",
+    "One-command Docker Compose deployment with MySQL, FastAPI, and Next.js"
+  ],
+  "publicApiSurface": [
+    "POST /api/auth/register",
+    "POST /api/auth/login",
+    "GET /api/auth/me",
+    "GET /api/projects",
+    "POST /api/projects",
+    "GET /api/projects/{id}",
+    "PATCH /api/projects/{id}",
+    "GET /api/projects/{id}/progress",
+    "GET /api/projects/{id}/schema",
+    "POST /api/projects/{id}/schema",
+    "PUT /api/projects/{id}/schema/{fid}",
+    "DELETE /api/projects/{id}/schema/{fid}",
+    "POST /api/projects/{id}/datasets",
+    "POST /api/projects/{id}/datasets/{did}/upload",
+    "GET /api/projects/{id}/datasets/{did}/items",
+    "GET /api/projects/{id}/annotators",
+    "POST /api/projects/{id}/annotators",
+    "DELETE /api/projects/{id}/annotators",
+    "POST /api/projects/{id}/annotators/assign",
+    "GET /api/tasks",
+    "GET /api/tasks/projects",
+    "GET /api/tasks/projects/{pid}/next",
+    "GET /api/tasks/{tid}",
+    "PATCH /api/tasks/{tid}/start",
+    "POST /api/tasks/{tid}/submit",
+    "GET /api/projects/{id}/agreement",
+    "POST /api/projects/{id}/agreement/compute",
+    "GET /api/projects/{id}/flags",
+    "POST /api/projects/{id}/flags/analyze",
+    "GET /api/projects/{id}/export"
+  ]
+}

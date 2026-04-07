@@ -1,0 +1,194 @@
+---
+title: "Stored procedures"
+description: "MySQL stored procedures for round-robin task assignment and inter-annotator agreement computation."
+---
+
+Axiom uses two stored procedures defined in `backend/app/db/procedures.sql`. They are called via the REST API — you do not invoke them directly in SQL during normal usage.
+
+## sp_assign_tasks
+
+Distributes dataset items to enrolled annotators using round-robin assignment. Called when a requester triggers task assignment on a project.
+
+**Signature:** `CALL sp_assign_tasks(p_project_id CHAR(36))`
+
+### How it works
+
+<Steps>
+  <Step title="Load project settings">
+    Reads `min_annotations_per_item` from the project. Raises an error if the project does not exist.
+  </Step>
+  <Step title="Check annotators">
+    Counts enrolled annotators from `project_annotators`. Raises an error if none are enrolled.
+  </Step>
+  <Step title="Build a randomized annotator list">
+    Creates a temporary table `tmp_annotators` populated with enrolled annotators in random order (via `ORDER BY RAND()`), each given a sequential index for round-robin cycling.
+  </Step>
+  <Step title="Iterate over all items">
+    Opens a cursor over every `dataset_item` in the project, ordered by `position` then `created_at`.
+  </Step>
+  <Step title="Assign remaining slots per item">
+    For each item, checks how many task assignments already exist. Fills remaining slots up to `min_annotations_per_item` by cycling through the annotator list — skipping any annotator already assigned to that item.
+  </Step>
+  <Step title="Cleanup">
+    Closes the cursor and drops the temporary annotator table.
+  </Step>
+</Steps>
+
+### Key behaviors
+
+- **Idempotent:** Running assignment multiple times will not duplicate tasks. Existing assignments are counted and skipped.
+- **Round-robin:** Annotator order is randomized once per run, then cycled sequentially across all items.
+- **Minimum coverage:** Each item will receive exactly `min_annotations_per_item` annotators, as long as enough annotators are enrolled.
+
+<Warning>
+If fewer annotators are enrolled than `min_annotations_per_item`, some items will receive fewer annotations than requested. Enroll enough annotators before triggering assignment.
+</Warning>
+
+### Trigger via API
+
+```bash
+curl -X POST https://your-axiom-instance/api/projects/{id}/annotators/assign \
+  -H "Authorization: Bearer <token>"
+```
+
+### Source
+
+```sql sp_assign_tasks (excerpt)
+CREATE PROCEDURE sp_assign_tasks(IN p_project_id CHAR(36))
+BEGIN
+    -- ...variable declarations...
+
+    -- Create temp table of annotators for round-robin
+    DROP TEMPORARY TABLE IF EXISTS tmp_annotators;
+    CREATE TEMPORARY TABLE tmp_annotators (
+        idx INT AUTO_INCREMENT PRIMARY KEY,
+        annotator_id CHAR(36)
+    );
+    INSERT INTO tmp_annotators (annotator_id)
+    SELECT annotator_id FROM project_annotators
+    WHERE project_id = p_project_id
+    ORDER BY RAND();
+
+    OPEN item_cursor;
+    item_loop: LOOP
+        FETCH item_cursor INTO v_item_id;
+        IF done_items THEN LEAVE item_loop; END IF;
+
+        SELECT COUNT(*) INTO v_existing_count
+        FROM annotation_tasks
+        WHERE dataset_item_id = v_item_id AND project_id = p_project_id;
+
+        SET v_assigned = v_existing_count;
+
+        assign_loop: WHILE v_assigned < v_min_ann DO
+            SELECT annotator_id INTO v_annotator_id
+            FROM tmp_annotators WHERE idx = v_ann_idx;
+
+            IF NOT EXISTS (
+                SELECT 1 FROM annotation_tasks
+                WHERE dataset_item_id = v_item_id
+                AND annotator_id = v_annotator_id
+                AND project_id = p_project_id
+            ) THEN
+                INSERT INTO annotation_tasks (project_id, dataset_item_id, annotator_id)
+                VALUES (p_project_id, v_item_id, v_annotator_id);
+                SET v_assigned = v_assigned + 1;
+            END IF;
+
+            SET v_ann_idx = (v_ann_idx % v_ann_count) + 1;
+        END WHILE;
+    END LOOP;
+END//
+```
+
+---
+
+## sp_compute_agreement
+
+Calculates percentage inter-annotator agreement for each `likert` and `boolean` field in a project. Results are upserted into the `agreement_scores` table.
+
+**Signature:** `CALL sp_compute_agreement(p_project_id CHAR(36))`
+
+### How it works
+
+<Steps>
+  <Step title="Count enrolled annotators">
+    Reads the total annotator count for the project from `project_annotators`.
+  </Step>
+  <Step title="Open a cursor over eligible fields">
+    Iterates over all `schema_fields` where `field_type IN ('likert', 'boolean')`. Free-text and multi-select fields are excluded — they do not have a meaningful numeric agreement metric.
+  </Step>
+  <Step title="Count items with sufficient annotations">
+    For each field, counts items that have at least 2 submitted annotations containing a response for that field key (using `JSON_EXTRACT`).
+  </Step>
+  <Step title="Count unanimous items">
+    Of those, counts items where all annotators gave the **same** value — detected by `COUNT(DISTINCT JSON_EXTRACT(...)) = 1`.
+  </Step>
+  <Step title="Compute and upsert">
+    Divides unanimous items by total items to get `pct_agreement` (0–1). Upserts the result into `agreement_scores` with `ON DUPLICATE KEY UPDATE`.
+  </Step>
+</Steps>
+
+### Key behaviors
+
+- **Only likert and boolean fields** are scored. Free-text fields are skipped.
+- **Minimum 2 annotations** per item are required for an item to count toward agreement.
+- **Upsert semantics:** Re-running the procedure overwrites previous scores with fresh data.
+
+<Note>
+Call this procedure after all (or most) annotations are collected to get meaningful scores. Partial results are valid but will reflect only the items annotated so far.
+</Note>
+
+### Trigger via API
+
+```bash
+curl -X POST https://your-axiom-instance/api/projects/{id}/agreement/compute \
+  -H "Authorization: Bearer <token>"
+```
+
+### Source
+
+```sql sp_compute_agreement (excerpt)
+CREATE PROCEDURE sp_compute_agreement(IN p_project_id CHAR(36))
+BEGIN
+    DECLARE field_cursor CURSOR FOR
+        SELECT field_key, field_type FROM schema_fields
+        WHERE project_id = p_project_id
+        AND field_type IN ('likert', 'boolean');
+
+    field_loop: LOOP
+        FETCH field_cursor INTO v_field_key, v_field_type;
+
+        -- Items with >= 2 submitted annotations for this field
+        SELECT COUNT(*) INTO v_n_items FROM (
+            SELECT at2.dataset_item_id
+            FROM annotation_tasks at2
+            JOIN annotations a ON a.task_id = at2.id
+            WHERE at2.project_id = p_project_id AND at2.status = 'submitted'
+            AND JSON_EXTRACT(a.responses, CONCAT('$.', v_field_key)) IS NOT NULL
+            GROUP BY at2.dataset_item_id
+            HAVING COUNT(*) >= 2
+        ) sub;
+
+        -- Items where all annotators agreed
+        SELECT COUNT(*) INTO v_n_agree FROM (
+            SELECT at2.dataset_item_id
+            FROM annotation_tasks at2
+            JOIN annotations a ON a.task_id = at2.id
+            WHERE at2.project_id = p_project_id AND at2.status = 'submitted'
+            AND JSON_EXTRACT(a.responses, CONCAT('$.', v_field_key)) IS NOT NULL
+            GROUP BY at2.dataset_item_id
+            HAVING COUNT(*) >= 2
+            AND COUNT(DISTINCT JSON_EXTRACT(a.responses, CONCAT('$.', v_field_key))) = 1
+        ) sub;
+
+        INSERT INTO agreement_scores (project_id, field_key, pct_agreement, n_items, n_annotators, computed_at)
+        VALUES (p_project_id, v_field_key, v_pct, v_n_items, v_n_annotators, NOW())
+        ON DUPLICATE KEY UPDATE
+            pct_agreement = VALUES(pct_agreement),
+            n_items = VALUES(n_items),
+            n_annotators = VALUES(n_annotators),
+            computed_at = NOW();
+    END LOOP;
+END//
+```

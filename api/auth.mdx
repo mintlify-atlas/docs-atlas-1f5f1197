@@ -1,0 +1,213 @@
+---
+title: "Authentication"
+description: "Register, log in, and authenticate API requests"
+---
+
+Axiom uses JWT (JSON Web Token) Bearer authentication. All authenticated endpoints require an `Authorization` header containing a token obtained from `POST /api/auth/login`.
+
+```http
+Authorization: Bearer <token>
+```
+
+Tokens are signed with HS256 and expire after a configurable number of hours (default: 24). They encode the user's `id` and `role`.
+
+<Warning>
+  Store tokens securely. Do not commit them to source control or expose them in client-side logs. Use environment variables or a secrets manager.
+</Warning>
+
+---
+
+## Register
+
+Create a new user account. Returns the new user object and a JWT token.
+
+```http
+POST /api/auth/register
+```
+
+**Authentication:** None required.
+
+### Request body
+
+<ParamField body="email" type="string" required>
+  Valid email address. Must be unique across all accounts.
+</ParamField>
+
+<ParamField body="password" type="string" required>
+  Plain-text password. Stored as a bcrypt hash.
+</ParamField>
+
+<ParamField body="display_name" type="string" required>
+  The user's display name shown in the UI.
+</ParamField>
+
+<ParamField body="role" type="string" required>
+  Account type. Must be `"requester"` or `"annotator"`.
+</ParamField>
+
+### Response
+
+<ResponseField name="token" type="string" required>
+  JWT Bearer token. Use this in the `Authorization` header for all subsequent requests.
+</ResponseField>
+
+<ResponseField name="user" type="object" required>
+  <Expandable title="properties">
+    <ResponseField name="id" type="string">
+      Unique user ID (UUID).
+    </ResponseField>
+    <ResponseField name="email" type="string">
+      Registered email address.
+    </ResponseField>
+    <ResponseField name="display_name" type="string">
+      User's display name.
+    </ResponseField>
+    <ResponseField name="role" type="string">
+      `"requester"` or `"annotator"`.
+    </ResponseField>
+  </Expandable>
+</ResponseField>
+
+### Curl example
+
+```bash
+curl -X POST http://localhost:8000/api/auth/register \
+  -H "Content-Type: application/json" \
+  -d '{
+    "email": "researcher@example.com",
+    "password": "s3cur3pass",
+    "display_name": "Dr. Jane Smith",
+    "role": "requester"
+  }'
+```
+
+```json
+{
+  "token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...",
+  "user": {
+    "id": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
+    "email": "researcher@example.com",
+    "display_name": "Dr. Jane Smith",
+    "role": "requester"
+  }
+}
+```
+
+---
+
+## Log in
+
+Exchange credentials for a JWT token.
+
+```http
+POST /api/auth/login
+```
+
+**Authentication:** None required.
+
+### Request body
+
+<ParamField body="email" type="string" required>
+  The registered email address.
+</ParamField>
+
+<ParamField body="password" type="string" required>
+  The account password.
+</ParamField>
+
+### Response
+
+<ResponseField name="token" type="string" required>
+  JWT Bearer token.
+</ResponseField>
+
+<ResponseField name="user" type="object" required>
+  <Expandable title="properties">
+    <ResponseField name="id" type="string">
+      User ID.
+    </ResponseField>
+    <ResponseField name="email" type="string">
+      Email address.
+    </ResponseField>
+    <ResponseField name="display_name" type="string">
+      Display name.
+    </ResponseField>
+    <ResponseField name="role" type="string">
+      `"requester"` or `"annotator"`.
+    </ResponseField>
+  </Expandable>
+</ResponseField>
+
+### Curl example
+
+```bash
+curl -X POST http://localhost:8000/api/auth/login \
+  -H "Content-Type: application/json" \
+  -d '{
+    "email": "researcher@example.com",
+    "password": "s3cur3pass"
+  }'
+```
+
+```json
+{
+  "token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...",
+  "user": {
+    "id": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
+    "email": "researcher@example.com",
+    "display_name": "Dr. Jane Smith",
+    "role": "requester"
+  }
+}
+```
+
+---
+
+## Get current user
+
+Return the authenticated user's profile.
+
+```http
+GET /api/auth/me
+```
+
+**Authentication:** Required (Bearer token).
+
+### Response
+
+<ResponseField name="id" type="string">
+  User ID.
+</ResponseField>
+
+<ResponseField name="email" type="string">
+  Email address.
+</ResponseField>
+
+<ResponseField name="display_name" type="string">
+  Display name.
+</ResponseField>
+
+<ResponseField name="role" type="string">
+  `"requester"` or `"annotator"`.
+</ResponseField>
+
+<ResponseField name="is_active" type="boolean">
+  Whether the account is active.
+</ResponseField>
+
+### Curl example
+
+```bash
+curl http://localhost:8000/api/auth/me \
+  -H "Authorization: Bearer <token>"
+```
+
+```json
+{
+  "id": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
+  "email": "researcher@example.com",
+  "display_name": "Dr. Jane Smith",
+  "role": "requester",
+  "is_active": true
+}
+```

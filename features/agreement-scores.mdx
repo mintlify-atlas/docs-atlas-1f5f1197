@@ -1,0 +1,130 @@
+---
+title: "Inter-annotator agreement"
+description: "Measure how consistently annotators label your data"
+---
+
+Inter-annotator agreement (IAA) measures how often your annotators give the same answer for the same item. High agreement means your annotation guidelines are clear and your schema is well-defined. Low agreement signals ambiguity in the task, unclear instructions, or genuine subjectivity in the data.
+
+Axiom computes per-field agreement scores using the `sp_compute_agreement` stored procedure and surfaces the results in the **Results** tab of your project.
+
+## How agreement is calculated
+
+The `sp_compute_agreement` procedure iterates over every `likert` and `boolean` field in your project's schema. For each field, it counts:
+
+- **N items** — the number of items that have at least two submitted annotations for that field.
+- **N agree** — the subset of those items where every annotator gave the exact same value.
+
+The agreement percentage is `N agree / N items`, expressed as a decimal between 0 and 1.
+
+```sql
+-- Items where all annotators gave the same value for a field
+SELECT COUNT(*) INTO v_n_agree
+FROM (
+    SELECT at2.dataset_item_id
+    FROM annotation_tasks at2
+    JOIN annotations a ON a.task_id = at2.id
+    WHERE at2.project_id = p_project_id
+      AND at2.status = 'submitted'
+      AND JSON_EXTRACT(a.responses, CONCAT('$.', v_field_key)) IS NOT NULL
+    GROUP BY at2.dataset_item_id
+    HAVING COUNT(*) >= 2
+      AND COUNT(DISTINCT JSON_EXTRACT(a.responses, CONCAT('$.', v_field_key))) = 1
+) sub;
+```
+
+Results are upserted into the `agreement_scores` table so you can recompute at any time without losing history — the latest computation overwrites the previous values.
+
+<Note>
+  Agreement is computed only for `likert` and `boolean` fields. Free text fields are excluded because exact-match comparison is not meaningful for open-ended responses.
+</Note>
+
+## Agreement score object
+
+Each row in `agreement_scores` represents one field's agreement across the full dataset.
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `field_key` | string | The field identifier from your schema (e.g. `linguistic_habits`) |
+| `field_label` | string | The human-readable label (e.g. `Linguistic Habits`) |
+| `pct_agreement` | decimal (0–1) | Fraction of items where all annotators agreed |
+| `n_items` | integer | Number of items included in the calculation |
+| `n_annotators` | integer | Number of enrolled annotators at computation time |
+| `computed_at` | timestamp | When this score was last computed |
+
+## Viewing agreement scores
+
+Open the **Results** tab in your project. The agreement table lists every `likert` and `boolean` field with its current agreement percentage. If you have not computed scores yet, the table is empty — click **Compute Agreement** to run the procedure.
+
+### Example: AI persona evaluation study
+
+A researcher running a persona consistency study with four Likert fields sees the following after collecting annotations from three annotators:
+
+| Field | Agreement |
+|-------|-----------|
+| Linguistic Habits | 87% |
+| Persona Consistency | 79% |
+| Action Justification | 71% |
+| Expected Action | 54% |
+
+"Linguistic Habits" at 87% means annotators almost always agree on whether the agent uses expected vocabulary. "Expected Action" at 54% is near chance for a 5-point Likert scale — annotators frequently disagree on whether the character's decision is logical, which suggests the rubric for that field needs clarification.
+
+## Interpreting results
+
+| Agreement range | What it means | What to do |
+|-----------------|---------------|------------|
+| 90–100% | Near-unanimous agreement | The field is clear and well-defined |
+| 70–89% | Good agreement with some variation | Review edge cases; minor guideline updates may help |
+| 50–69% | Moderate disagreement | Revisit the field's definition and annotator instructions |
+| Below 50% | Poor agreement | The field may be too subjective, ambiguous, or the scale may be inappropriate |
+
+Low agreement on a specific field does not invalidate your dataset — it tells you that field captures genuine subjectivity. You might choose to drop the field, redefine it, or treat it as a soft label in your model.
+
+Combine agreement scores with the [AI flagging](/features/ai-flagging) view to identify the specific items driving disagreement, not just the fields.
+
+## Triggering recomputation
+
+### From the UI
+
+Click **Compute Agreement** in the **Results** tab. The table updates immediately with the latest scores.
+
+### From the API
+
+```bash
+curl -X POST https://your-axiom-host/api/projects/{id}/agreement/compute \
+  -H "Authorization: Bearer <JWT>"
+```
+
+The response returns the full updated score list:
+
+```json
+[
+  {
+    "field_key": "linguistic_habits",
+    "pct_agreement": 0.87,
+    "n_items": 30,
+    "n_annotators": 3,
+    "computed_at": "2024-03-15T11:00:00"
+  },
+  {
+    "field_key": "expected_action",
+    "pct_agreement": 0.54,
+    "n_items": 30,
+    "n_annotators": 3,
+    "computed_at": "2024-03-15T11:00:00"
+  }
+]
+```
+
+### Retrieve existing scores without recomputing
+
+```bash
+curl https://your-axiom-host/api/projects/{id}/agreement \
+  -H "Authorization: Bearer <JWT>"
+```
+
+## API reference
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| `GET` | `/api/projects/{id}/agreement` | Retrieve current agreement scores |
+| `POST` | `/api/projects/{id}/agreement/compute` | Recompute scores and return the updated list |

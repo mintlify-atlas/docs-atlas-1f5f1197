@@ -1,0 +1,244 @@
+---
+title: "Database schema"
+description: "MySQL tables, triggers, views, and indexes powering Axiom."
+---
+
+Axiom uses MySQL 8.0 with 11 tables, 4 triggers, and 3 views. The schema is defined in `backend/app/db/schema.sql` and initialized automatically on first container start.
+
+## Tables
+
+<AccordionGroup>
+  <Accordion title="users">
+    Stores all registered users. The `role` column determines whether a user is a **requester** (project creator) or **annotator** (labeler).
+
+    ```sql
+    CREATE TABLE users (
+        id            CHAR(36) PRIMARY KEY DEFAULT (UUID()),
+        email         VARCHAR(255) NOT NULL UNIQUE,
+        password_hash VARCHAR(255) NOT NULL,
+        display_name  VARCHAR(255) NOT NULL,
+        role          ENUM('requester', 'annotator') NOT NULL,
+        is_active     BOOLEAN NOT NULL DEFAULT TRUE,
+        created_at    TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        updated_at    TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+    );
+    ```
+  </Accordion>
+
+  <Accordion title="projects">
+    Annotation projects owned by requesters. The `status` lifecycle is `draft → active → completed` (or `paused`/`archived`). The `min_annotations_per_item` field controls how many annotators label each item.
+
+    ```sql
+    CREATE TABLE projects (
+        id                       CHAR(36) PRIMARY KEY DEFAULT (UUID()),
+        requester_id             CHAR(36) NOT NULL,
+        title                    VARCHAR(255) NOT NULL,
+        description              TEXT,
+        status                   ENUM('draft', 'active', 'paused', 'completed', 'archived') NOT NULL DEFAULT 'draft',
+        min_annotations_per_item INT NOT NULL DEFAULT 3,
+        deadline                 TIMESTAMP NULL,
+        ...
+    );
+    ```
+  </Accordion>
+
+  <Accordion title="schema_fields">
+    Custom annotation field definitions per project. Each row represents one question on the annotation form. Schemas are immutable once the project leaves `draft` status — enforced by triggers.
+
+    ```sql
+    CREATE TABLE schema_fields (
+        id          CHAR(36) PRIMARY KEY DEFAULT (UUID()),
+        project_id  CHAR(36) NOT NULL,
+        field_key   VARCHAR(100) NOT NULL,
+        label       VARCHAR(255) NOT NULL,
+        description TEXT,
+        field_type  ENUM('likert', 'boolean', 'free_text', 'bounding_box', 'image_tag', 'multi_select') NOT NULL,
+        is_required BOOLEAN NOT NULL DEFAULT TRUE,
+        position    SMALLINT NOT NULL DEFAULT 0,
+        config      JSON NOT NULL DEFAULT ('{}'),
+        ...
+        UNIQUE KEY uq_project_field (project_id, field_key)
+    );
+    ```
+  </Accordion>
+
+  <Accordion title="datasets & dataset_items">
+    A **dataset** is a named container within a project. **Dataset items** are the individual records to annotate — each stored as a JSON blob so they can hold any structure (text, image URLs, etc.).
+
+    ```sql
+    CREATE TABLE datasets (
+        id         CHAR(36) PRIMARY KEY DEFAULT (UUID()),
+        project_id CHAR(36) NOT NULL,
+        name       VARCHAR(255) NOT NULL,
+        ...
+    );
+
+    CREATE TABLE dataset_items (
+        id          CHAR(36) PRIMARY KEY DEFAULT (UUID()),
+        dataset_id  CHAR(36) NOT NULL,
+        external_id VARCHAR(255),
+        item_data   JSON NOT NULL,
+        position    INT,
+        ...
+        UNIQUE KEY uq_dataset_external (dataset_id, external_id)
+    );
+    ```
+  </Accordion>
+
+  <Accordion title="project_annotators">
+    Junction table tracking which annotators are enrolled in which projects.
+
+    ```sql
+    CREATE TABLE project_annotators (
+        project_id   CHAR(36) NOT NULL,
+        annotator_id CHAR(36) NOT NULL,
+        enrolled_at  TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        PRIMARY KEY (project_id, annotator_id)
+    );
+    ```
+  </Accordion>
+
+  <Accordion title="annotation_tasks">
+    One row per (item, annotator) assignment. Tracks the task lifecycle: `pending → in_progress → submitted`.
+
+    ```sql
+    CREATE TABLE annotation_tasks (
+        id              CHAR(36) PRIMARY KEY DEFAULT (UUID()),
+        project_id      CHAR(36) NOT NULL,
+        dataset_item_id CHAR(36) NOT NULL,
+        annotator_id    CHAR(36) NOT NULL,
+        status          ENUM('pending', 'in_progress', 'submitted', 'skipped') NOT NULL DEFAULT 'pending',
+        assigned_at     TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        started_at      TIMESTAMP NULL,
+        submitted_at    TIMESTAMP NULL,
+        UNIQUE KEY uq_item_annotator (dataset_item_id, annotator_id)
+    );
+    ```
+  </Accordion>
+
+  <Accordion title="annotations">
+    Submitted annotation responses. The `responses` JSON object is keyed by `field_key` and maps to the annotator's answer for each schema field.
+
+    ```sql
+    CREATE TABLE annotations (
+        id           CHAR(36) PRIMARY KEY DEFAULT (UUID()),
+        task_id      CHAR(36) NOT NULL UNIQUE,
+        responses    JSON NOT NULL,
+        submitted_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        ...
+    );
+    ```
+
+    Example `responses` value:
+    ```json
+    {
+      "linguistic_habits": 4,
+      "contains_pii": false,
+      "notes": "The tone felt slightly off in the third paragraph."
+    }
+    ```
+  </Accordion>
+
+  <Accordion title="ai_flags">
+    Stores AI flagging results from Claude. One row per (project, item) pair. `confidence_score` is a decimal between 0 and 1.
+
+    ```sql
+    CREATE TABLE ai_flags (
+        id               CHAR(36) PRIMARY KEY DEFAULT (UUID()),
+        project_id       CHAR(36) NOT NULL,
+        dataset_item_id  CHAR(36) NOT NULL,
+        is_flagged       BOOLEAN NOT NULL DEFAULT FALSE,
+        confidence_score DECIMAL(5,4),
+        rationale        TEXT,
+        model_version    VARCHAR(100),
+        flagged_at       TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        UNIQUE KEY uq_project_item_flag (project_id, dataset_item_id)
+    );
+    ```
+  </Accordion>
+
+  <Accordion title="agreement_scores">
+    Cached inter-annotator agreement per field, computed by `sp_compute_agreement`. `pct_agreement` is a decimal (0–1) representing the fraction of items where all annotators gave the same response.
+
+    ```sql
+    CREATE TABLE agreement_scores (
+        id            CHAR(36) PRIMARY KEY DEFAULT (UUID()),
+        project_id    CHAR(36) NOT NULL,
+        field_key     VARCHAR(100) NOT NULL,
+        pct_agreement DECIMAL(5,4),
+        n_items       INT,
+        n_annotators  INT,
+        computed_at   TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        UNIQUE KEY uq_project_field_agree (project_id, field_key)
+    );
+    ```
+  </Accordion>
+
+  <Accordion title="export_log">
+    Audit trail of every dataset export. Records who exported, what format, and how many rows were returned.
+
+    ```sql
+    CREATE TABLE export_log (
+        id           CHAR(36) PRIMARY KEY DEFAULT (UUID()),
+        project_id   CHAR(36) NOT NULL,
+        requested_by CHAR(36) NOT NULL,
+        format       VARCHAR(10) NOT NULL,
+        row_count    INT,
+        exported_at  TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+    );
+    ```
+  </Accordion>
+</AccordionGroup>
+
+## Triggers
+
+Four triggers enforce data integrity and automate status transitions.
+
+| Trigger | Event | Action |
+|---------|-------|--------|
+| `trg_annotation_after_insert` | AFTER INSERT on `annotations` | Sets the corresponding task's `status = 'submitted'` and records `submitted_at` |
+| `trg_annotation_check_completion` | AFTER UPDATE on `annotation_tasks` | If every task in the project is submitted, sets `projects.status = 'completed'` |
+| `trg_schema_fields_before_insert` | BEFORE INSERT on `schema_fields` | Raises an error if the project is not in `draft` status |
+| `trg_schema_fields_before_update` | BEFORE UPDATE on `schema_fields` | Raises an error if the project is not in `draft` status |
+
+<Note>
+The schema-lock triggers mean you must finalize your annotation fields before activating a project. Once you move a project out of `draft`, its schema cannot be changed.
+</Note>
+
+## Views
+
+Three views pre-join commonly queried data for the dashboard, workload tracking, and exports.
+
+### v_project_progress
+
+Used by the requester dashboard. Returns task counts, completion percentage, and flagged item count per project.
+
+```sql
+-- Key columns returned:
+-- project_id, title, status, total_tasks, submitted_tasks,
+-- pending_tasks, total_items, pct_complete, flagged_items
+SELECT * FROM v_project_progress WHERE requester_id = ?;
+```
+
+### v_annotator_workload
+
+Per-annotator breakdown of assigned, completed, in-progress, and remaining tasks within each project.
+
+```sql
+-- Key columns returned:
+-- annotator_id, display_name, email, project_id, project_title,
+-- total_assigned, completed, remaining, in_progress, completion_pct
+SELECT * FROM v_annotator_workload WHERE project_id = ?;
+```
+
+### v_annotation_export
+
+Flattened join of items, annotations, and AI flags. Used by the export endpoint to produce the final labeled dataset.
+
+```sql
+-- Key columns returned:
+-- project_id, project_title, item_id, external_id, item_data,
+-- annotator_id, annotator_name, responses, submitted_at,
+-- ai_flagged, ai_confidence, ai_rationale
+SELECT * FROM v_annotation_export WHERE project_id = ?;
+```

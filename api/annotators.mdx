@@ -1,0 +1,202 @@
+---
+title: "Annotators"
+description: "Enroll annotators and assign tasks"
+---
+
+After creating a project and uploading a dataset, you enroll annotators and trigger task assignment. Axiom distributes items to annotators using a round-robin stored procedure (`sp_assign_tasks`), ensuring each item receives the required number of independent annotations.
+
+<Note>
+  The `min_annotations_per_item` field on the project controls how many annotators are assigned to each item. The default is `3`. Increase this for higher confidence, or lower it for faster turnaround.
+</Note>
+
+All annotator endpoints require the `requester` role.
+
+---
+
+## List annotators
+
+Return all annotators enrolled in a project, including their user profile details.
+
+```http
+GET /api/projects/{project_id}/annotators
+```
+
+**Authentication:** Required (Bearer token, `requester` role).
+
+### Path parameters
+
+<ParamField path="project_id" type="string" required>
+  Project UUID.
+</ParamField>
+
+### Response
+
+Array of enrolled annotator records.
+
+<ResponseField name="id" type="string">
+  Annotator's user UUID.
+</ResponseField>
+
+<ResponseField name="email" type="string">
+  Annotator's email address.
+</ResponseField>
+
+<ResponseField name="display_name" type="string">
+  Annotator's display name.
+</ResponseField>
+
+<ResponseField name="enrolled_at" type="string">
+  ISO 8601 timestamp of when the annotator was added to the project.
+</ResponseField>
+
+### Curl example
+
+```bash
+curl http://localhost:8000/api/projects/proj-uuid-1/annotators \
+  -H "Authorization: Bearer <token>"
+```
+
+```json
+[
+  {
+    "id": "user-uuid-2",
+    "email": "ann1@example.com",
+    "display_name": "Alice",
+    "enrolled_at": "2025-04-02T09:00:00"
+  },
+  {
+    "id": "user-uuid-3",
+    "email": "ann2@example.com",
+    "display_name": "Bob",
+    "enrolled_at": "2025-04-02T09:05:00"
+  }
+]
+```
+
+---
+
+## Enroll an annotator
+
+Add an annotator to a project by their registered email address. The user must already have an account with `role = "annotator"`.
+
+```http
+POST /api/projects/{project_id}/annotators
+```
+
+**Authentication:** Required (Bearer token, `requester` role).
+
+### Path parameters
+
+<ParamField path="project_id" type="string" required>
+  Project UUID.
+</ParamField>
+
+### Request body
+
+<ParamField body="annotator_email" type="string" required>
+  The email address of the annotator to enroll. Must match an existing account with `role = "annotator"`.
+</ParamField>
+
+### Response
+
+<ResponseField name="enrolled" type="boolean">
+  `true` on success.
+</ResponseField>
+
+<ResponseField name="annotator_id" type="string">
+  UUID of the enrolled annotator.
+</ResponseField>
+
+### Curl example
+
+```bash
+curl -X POST http://localhost:8000/api/projects/proj-uuid-1/annotators \
+  -H "Authorization: Bearer <token>" \
+  -H "Content-Type: application/json" \
+  -d '{"annotator_email": "ann1@example.com"}'
+```
+
+```json
+{
+  "enrolled": true,
+  "annotator_id": "user-uuid-2"
+}
+```
+
+---
+
+## Remove an annotator
+
+Unenroll an annotator from a project. This removes their entry from `project_annotators` but does not delete any tasks or annotations they have already submitted.
+
+```http
+DELETE /api/projects/{project_id}/annotators/{annotator_id}
+```
+
+**Authentication:** Required (Bearer token, `requester` role).
+
+### Path parameters
+
+<ParamField path="project_id" type="string" required>
+  Project UUID.
+</ParamField>
+
+<ParamField path="annotator_id" type="string" required>
+  Annotator's user UUID.
+</ParamField>
+
+### Response
+
+```json
+{ "removed": true }
+```
+
+### Curl example
+
+```bash
+curl -X DELETE http://localhost:8000/api/projects/proj-uuid-1/annotators/user-uuid-2 \
+  -H "Authorization: Bearer <token>"
+```
+
+---
+
+## Assign tasks
+
+Trigger the `sp_assign_tasks` stored procedure to distribute dataset items to enrolled annotators using round-robin assignment.
+
+```http
+POST /api/projects/{project_id}/annotators/assign
+```
+
+**Authentication:** Required (Bearer token, `requester` role).
+
+The procedure:
+- Iterates over all items in the project's datasets
+- For each item, assigns it to N distinct annotators (where N = `min_annotations_per_item`)
+- Skips items that already have enough assignments
+- Creates one `annotation_tasks` row per (item, annotator) pair
+
+You can call this endpoint multiple times safely — it skips already-assigned items.
+
+### Path parameters
+
+<ParamField path="project_id" type="string" required>
+  Project UUID.
+</ParamField>
+
+### Response
+
+<ResponseField name="tasks_created" type="number">
+  Total number of annotation tasks now assigned for this project (cumulative, not just new ones created in this call).
+</ResponseField>
+
+### Curl example
+
+```bash
+curl -X POST http://localhost:8000/api/projects/proj-uuid-1/annotators/assign \
+  -H "Authorization: Bearer <token>"
+```
+
+```json
+{ "tasks_created": 30 }
+```

@@ -1,0 +1,425 @@
+---
+title: "Tasks"
+description: "Browse, start, and submit annotation tasks"
+---
+
+Annotation tasks are the unit of work for annotators. Each task represents a single (annotator, item) assignment. Annotators work through tasks sequentially within a project: fetch the next item, review it alongside the annotation form, submit responses, and repeat.
+
+**Sequential annotation flow:**
+
+```
+GET /api/tasks/projects/{pid}/next
+  → PATCH /api/tasks/{tid}/start
+    → POST /api/tasks/{tid}/submit
+      → GET /api/tasks/projects/{pid}/next  (repeat)
+```
+
+When all tasks for a project are submitted, a database trigger automatically sets the project's status to `"completed"`.
+
+All task endpoints require a valid Bearer token. Annotators interact with the task queue; requesters can also read task data.
+
+---
+
+## List my tasks
+
+Return all pending and in-progress tasks for the authenticated annotator, across all projects.
+
+```http
+GET /api/tasks
+```
+
+**Authentication:** Required (Bearer token, any role).
+
+### Response
+
+Array of task records.
+
+<ResponseField name="id" type="string">
+  Task UUID.
+</ResponseField>
+
+<ResponseField name="project_id" type="string">
+  Project UUID.
+</ResponseField>
+
+<ResponseField name="project_title" type="string">
+  Project title.
+</ResponseField>
+
+<ResponseField name="dataset_item_id" type="string">
+  Dataset item UUID being annotated.
+</ResponseField>
+
+<ResponseField name="item_data" type="object">
+  The raw item JSON as uploaded to the dataset.
+</ResponseField>
+
+<ResponseField name="status" type="string">
+  `"pending"` or `"in_progress"`.
+</ResponseField>
+
+<ResponseField name="assigned_at" type="string">
+  ISO 8601 timestamp when the task was assigned.
+</ResponseField>
+
+<ResponseField name="started_at" type="string">
+  ISO 8601 timestamp when the annotator started the task, or `null`.
+</ResponseField>
+
+### Curl example
+
+```bash
+curl http://localhost:8000/api/tasks \
+  -H "Authorization: Bearer <token>"
+```
+
+---
+
+## List task projects
+
+Return projects that have pending or in-progress tasks for the annotator, grouped with workload counts. Use this to build the annotator's project queue view.
+
+```http
+GET /api/tasks/projects
+```
+
+**Authentication:** Required (Bearer token, any role).
+
+### Response
+
+<ResponseField name="project_id" type="string">
+  Project UUID.
+</ResponseField>
+
+<ResponseField name="title" type="string">
+  Project title.
+</ResponseField>
+
+<ResponseField name="description" type="string">
+  Project description.
+</ResponseField>
+
+<ResponseField name="project_status" type="string">
+  Current project status.
+</ResponseField>
+
+<ResponseField name="total_tasks" type="number">
+  Total tasks assigned to this annotator in the project.
+</ResponseField>
+
+<ResponseField name="completed_tasks" type="number">
+  Number of submitted tasks.
+</ResponseField>
+
+<ResponseField name="remaining_tasks" type="number">
+  Number of pending or in-progress tasks.
+</ResponseField>
+
+<ResponseField name="first_assigned" type="string">
+  Timestamp of the earliest task assignment.
+</ResponseField>
+
+### Curl example
+
+```bash
+curl http://localhost:8000/api/tasks/projects \
+  -H "Authorization: Bearer <token>"
+```
+
+```json
+[
+  {
+    "project_id": "proj-uuid-1",
+    "title": "Persona Consistency Study",
+    "description": "Evaluate whether LLM agents stay in character.",
+    "project_status": "active",
+    "total_tasks": 10,
+    "completed_tasks": 3,
+    "remaining_tasks": 7,
+    "first_assigned": "2025-04-02T09:00:00"
+  }
+]
+```
+
+---
+
+## Get next task in project
+
+Return the next pending or in-progress task for the annotator within a specific project. Items are returned in their original upload order. Also returns the project's annotation schema and the annotator's progress counters.
+
+If no tasks remain, returns `{ "done": true, "project_id": "..." }`.
+
+```http
+GET /api/tasks/projects/{project_id}/next
+```
+
+**Authentication:** Required (Bearer token, any role).
+
+### Path parameters
+
+<ParamField path="project_id" type="string" required>
+  Project UUID.
+</ParamField>
+
+### Response
+
+<ResponseField name="id" type="string">
+  Task UUID.
+</ResponseField>
+
+<ResponseField name="project_id" type="string">
+  Project UUID.
+</ResponseField>
+
+<ResponseField name="project_title" type="string">
+  Project title.
+</ResponseField>
+
+<ResponseField name="dataset_item_id" type="string">
+  Dataset item UUID.
+</ResponseField>
+
+<ResponseField name="external_id" type="string">
+  The item's original `_id` from the upload file, if provided.
+</ResponseField>
+
+<ResponseField name="item_data" type="object">
+  Raw item JSON payload.
+</ResponseField>
+
+<ResponseField name="status" type="string">
+  `"pending"` or `"in_progress"`.
+</ResponseField>
+
+<ResponseField name="schema_fields" type="object[]">
+  Annotation schema fields for this project. Each field defines the form question type and config.
+</ResponseField>
+
+<ResponseField name="progress_total" type="number">
+  Total tasks assigned to the annotator in this project.
+</ResponseField>
+
+<ResponseField name="progress_completed" type="number">
+  Tasks already submitted by the annotator in this project.
+</ResponseField>
+
+### Curl example
+
+```bash
+curl http://localhost:8000/api/tasks/projects/proj-uuid-1/next \
+  -H "Authorization: Bearer <token>"
+```
+
+```json
+{
+  "id": "task-uuid-1",
+  "project_id": "proj-uuid-1",
+  "project_title": "Persona Consistency Study",
+  "dataset_item_id": "item-internal-uuid",
+  "external_id": "item-001",
+  "item_data": {
+    "persona": "36-year-old Australian environmental lawyer",
+    "response": "Look, mate, we can't just bulldoze the heritage site..."
+  },
+  "status": "pending",
+  "schema_fields": [
+    {
+      "field_key": "linguistic_habits",
+      "label": "Linguistic Habits",
+      "field_type": "likert",
+      "config": { "min": 1, "max": 5 },
+      "is_required": true,
+      "position": 0
+    }
+  ],
+  "progress_total": 10,
+  "progress_completed": 3
+}
+```
+
+---
+
+## Get annotation history (by project)
+
+Return projects the annotator has completed work in, grouped with completion counts. Useful for the history view.
+
+```http
+GET /api/tasks/history/projects
+```
+
+**Authentication:** Required (Bearer token, any role).
+
+### Response
+
+<ResponseField name="project_id" type="string">
+  Project UUID.
+</ResponseField>
+
+<ResponseField name="title" type="string">
+  Project title.
+</ResponseField>
+
+<ResponseField name="completed_tasks" type="number">
+  Total submitted tasks by this annotator in the project.
+</ResponseField>
+
+<ResponseField name="last_submitted" type="string">
+  Timestamp of the most recent submission.
+</ResponseField>
+
+### Curl example
+
+```bash
+curl http://localhost:8000/api/tasks/history/projects \
+  -H "Authorization: Bearer <token>"
+```
+
+---
+
+## Get task detail
+
+Fetch full task detail including item data, schema fields, and any existing annotation.
+
+```http
+GET /api/tasks/{task_id}
+```
+
+**Authentication:** Required (Bearer token, any role).
+
+### Path parameters
+
+<ParamField path="task_id" type="string" required>
+  Task UUID.
+</ParamField>
+
+### Response
+
+All task fields plus:
+
+<ResponseField name="schema_fields" type="object[]">
+  Annotation schema fields for the project.
+</ResponseField>
+
+<ResponseField name="annotation" type="object">
+  The submitted annotation record, or `null` if not yet submitted.
+
+  <Expandable title="properties">
+    <ResponseField name="id" type="string">
+      Annotation UUID.
+    </ResponseField>
+    <ResponseField name="responses" type="object">
+      Key-value map of field_key → submitted value.
+    </ResponseField>
+    <ResponseField name="submitted_at" type="string">
+      Submission timestamp.
+    </ResponseField>
+  </Expandable>
+</ResponseField>
+
+### Curl example
+
+```bash
+curl http://localhost:8000/api/tasks/task-uuid-1 \
+  -H "Authorization: Bearer <token>"
+```
+
+---
+
+## Start a task
+
+Mark a pending task as `"in_progress"`. Only works if the task currently has `status = "pending"` and belongs to the authenticated annotator.
+
+```http
+PATCH /api/tasks/{task_id}/start
+```
+
+**Authentication:** Required (Bearer token, any role).
+
+### Path parameters
+
+<ParamField path="task_id" type="string" required>
+  Task UUID.
+</ParamField>
+
+### Response
+
+```json
+{ "started": true }
+```
+
+### Curl example
+
+```bash
+curl -X PATCH http://localhost:8000/api/tasks/task-uuid-1/start \
+  -H "Authorization: Bearer <token>"
+```
+
+---
+
+## Submit an annotation
+
+Submit annotation responses for a task. The `responses` object must be keyed by `field_key` as defined in the project schema.
+
+A database trigger fires after insert to automatically set the task status to `"submitted"` and record the timestamp. If this was the last pending task in the project, a second trigger auto-completes the project.
+
+```http
+POST /api/tasks/{task_id}/submit
+```
+
+**Authentication:** Required (Bearer token, any role).
+
+### Path parameters
+
+<ParamField path="task_id" type="string" required>
+  Task UUID.
+</ParamField>
+
+### Request body
+
+<ParamField body="responses" type="object" required>
+  A JSON object where each key is a `field_key` from the project schema and each value is the annotator's answer.
+
+  Value types depend on field type:
+  - `likert` → number (e.g., `4`)
+  - `boolean` → boolean (`true` / `false`)
+  - `free_text` → string
+  - `multi_select` → array of strings
+
+</ParamField>
+
+### Example submission
+
+```json
+{
+  "responses": {
+    "linguistic_habits": 4,
+    "persona_consistency": 3,
+    "expected_action": 5,
+    "action_justification": 4,
+    "notes": "The character's vocabulary was mostly consistent, but the tone shifted mid-response."
+  }
+}
+```
+
+### Response
+
+```json
+{ "submitted": true }
+```
+
+### Curl example
+
+```bash
+curl -X POST http://localhost:8000/api/tasks/task-uuid-1/submit \
+  -H "Authorization: Bearer <token>" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "responses": {
+      "linguistic_habits": 4,
+      "persona_consistency": 3,
+      "expected_action": 5,
+      "action_justification": 4,
+      "notes": "Character voice was mostly consistent."
+    }
+  }'
+```

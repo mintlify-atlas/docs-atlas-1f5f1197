@@ -1,0 +1,86 @@
+---
+title: "Projects"
+description: "How annotation projects work in Axiom"
+---
+
+A project is the top-level container for an annotation campaign. It holds the schema, the dataset, the list of enrolled annotators, and all submitted annotations.
+
+## Project fields
+
+When you create a project, you provide:
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `title` | string | Human-readable name shown across the UI |
+| `description` | string (optional) | Describes the annotation task and goals |
+| `deadline` | date (optional) | Target completion date; projects without a deadline sort last |
+| `min_annotations_per_item` | integer | How many annotators must label each item (default: `3`) |
+
+Projects are created with a `POST /api/projects` request. The `status` field is set automatically — you do not supply it on creation.
+
+## Project lifecycle
+
+Projects move through three statuses. The transitions are mostly automatic, driven by database triggers.
+
+<Steps>
+  <Step title="draft">
+    The starting state. You can freely edit the project title, description, and schema. Annotators cannot be assigned tasks yet — you must first upload a dataset and enroll annotators.
+
+    This is the only status in which the schema can be modified. Once you move to `active`, all schema fields are locked.
+  </Step>
+  <Step title="active">
+    Set by the requester (via `PATCH /api/projects/{id}` with `"status": "active"`) after the schema is finalized and tasks have been assigned. Annotators can now see and work through their assigned items.
+  </Step>
+  <Step title="completed">
+    Set automatically by a database trigger the moment every annotation task in the project reaches `submitted` status. You do not need to manually close a project.
+  </Step>
+</Steps>
+
+<Note>
+  The schema is locked as soon as the project leaves `draft` status. A database trigger blocks any `INSERT` or `UPDATE` on `schema_fields` for non-draft projects and returns an error. Plan your field definitions carefully before activating a project.
+</Note>
+
+## Automatic completion trigger
+
+The `trg_annotation_check_completion` trigger fires after every annotation insert. It checks whether all `annotation_tasks` in the project have `status = 'submitted'`. If they have, it updates `projects.status` to `'completed'` automatically.
+
+This means you never need to manually close a project — it completes itself as soon as the last annotator submits their last task.
+
+## The five-tab project view
+
+The project detail page at `/projects/[id]` organizes all management tasks across five tabs:
+
+<AccordionGroup>
+  <Accordion title="Overview">
+    Displays the project status, deadline, total task count, submitted count, pending count, percentage complete, and number of AI-flagged items. Data is served from the `v_project_progress` view.
+  </Accordion>
+  <Accordion title="Schema">
+    The annotation field builder. Add, reorder, and remove fields while the project is in `draft` status. Each field has a type, label, key, and optional configuration. See [Annotation schemas](/concepts/schemas) for the full field reference.
+  </Accordion>
+  <Accordion title="Data">
+    Upload a JSON dataset and browse the items that will be annotated. Items can contain text, image URLs, or any structured JSON payload.
+  </Accordion>
+  <Accordion title="Annotators">
+    Enroll annotator accounts into the project, view per-annotator workload (assigned, completed, remaining tasks), and trigger the `sp_assign_tasks` stored procedure to distribute items.
+  </Accordion>
+  <Accordion title="Results">
+    Review inter-annotator agreement scores per schema field, inspect AI-flagged items, and export the final labeled dataset as JSON.
+  </Accordion>
+</AccordionGroup>
+
+## Progress endpoint
+
+The `GET /api/projects/{id}/progress` endpoint returns a snapshot from the `v_project_progress` view:
+
+```json
+{
+  "project_id": "42",
+  "title": "Persona Consistency Study",
+  "status": "active",
+  "total_tasks": 90,
+  "submitted_tasks": 37,
+  "pending_tasks": 53,
+  "pct_complete": 41.1,
+  "flagged_count": 4
+}
+```

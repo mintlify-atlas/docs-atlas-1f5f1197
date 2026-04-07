@@ -1,0 +1,243 @@
+---
+title: "Agreement & flags"
+description: "Compute inter-annotator agreement and manage AI flags"
+---
+
+After annotations are collected, Axiom provides two quality metrics:
+
+1. **Inter-annotator agreement** — what percentage of items have unanimous responses for each schema field, computed by the `sp_compute_agreement` stored procedure.
+2. **AI flags** — items where annotators diverged significantly, detected by Claude and stored with a confidence score and written rationale.
+
+Both agreement scores and flags are cached. Call the compute/analyze endpoints to refresh them.
+
+All endpoints on this page require the `requester` role.
+
+---
+
+## Get agreement scores
+
+Return cached inter-annotator agreement scores for each annotation field in the project.
+
+```http
+GET /api/projects/{project_id}/agreement
+```
+
+**Authentication:** Required (Bearer token, `requester` role).
+
+### Path parameters
+
+<ParamField path="project_id" type="string" required>
+  Project UUID.
+</ParamField>
+
+### Response
+
+Array of agreement score records, one per schema field.
+
+<ResponseField name="field_key" type="string">
+  Machine-readable key identifying the schema field.
+</ResponseField>
+
+<ResponseField name="pct_agreement" type="number">
+  Fraction of items where all annotators gave the same response (0.0–1.0). Multiply by 100 for a percentage.
+</ResponseField>
+
+<ResponseField name="n_items" type="number">
+  Number of items that had at least 2 submitted annotations for this field.
+</ResponseField>
+
+<ResponseField name="n_annotators" type="number">
+  Number of annotators enrolled in the project at the time of computation.
+</ResponseField>
+
+<ResponseField name="project_id" type="string">
+  Project UUID.
+</ResponseField>
+
+<ResponseField name="computed_at" type="string">
+  ISO 8601 timestamp of when scores were last computed.
+</ResponseField>
+
+### Curl example
+
+```bash
+curl http://localhost:8000/api/projects/proj-uuid-1/agreement \
+  -H "Authorization: Bearer <token>"
+```
+
+```json
+[
+  {
+    "field_key": "linguistic_habits",
+    "pct_agreement": 0.87,
+    "n_items": 30,
+    "n_annotators": 3,
+    "project_id": "proj-uuid-1",
+    "computed_at": "2025-04-05T14:00:00"
+  },
+  {
+    "field_key": "expected_action",
+    "pct_agreement": 0.54,
+    "n_items": 30,
+    "n_annotators": 3,
+    "project_id": "proj-uuid-1",
+    "computed_at": "2025-04-05T14:00:00"
+  }
+]
+```
+
+---
+
+## Compute agreement scores
+
+Trigger `sp_compute_agreement` to recalculate agreement scores for all applicable fields. The procedure iterates over Likert and boolean fields, calculates the percentage of items with unanimous responses, and upserts results into `agreement_scores`. Returns the updated scores immediately.
+
+```http
+POST /api/projects/{project_id}/agreement/compute
+```
+
+**Authentication:** Required (Bearer token, `requester` role).
+
+### Path parameters
+
+<ParamField path="project_id" type="string" required>
+  Project UUID.
+</ParamField>
+
+### Response
+
+Same shape as [GET /agreement](#get-agreement-scores) — the freshly computed scores array.
+
+### Curl example
+
+```bash
+curl -X POST http://localhost:8000/api/projects/proj-uuid-1/agreement/compute \
+  -H "Authorization: Bearer <token>"
+```
+
+---
+
+## Get flagged items
+
+Return all items in the project that the AI flagging module marked as having significant annotator disagreement. Results are sorted by confidence score (highest first) so the most contentious items appear at the top.
+
+```http
+GET /api/projects/{project_id}/flags
+```
+
+**Authentication:** Required (Bearer token, `requester` role).
+
+### Path parameters
+
+<ParamField path="project_id" type="string" required>
+  Project UUID.
+</ParamField>
+
+### Response
+
+Array of AI flag records joined with item data.
+
+<ResponseField name="id" type="string">
+  Flag record UUID.
+</ResponseField>
+
+<ResponseField name="dataset_item_id" type="string">
+  UUID of the flagged dataset item.
+</ResponseField>
+
+<ResponseField name="external_id" type="string">
+  The item's original `_id` from the upload file, if any.
+</ResponseField>
+
+<ResponseField name="item_data" type="object">
+  Raw item JSON so you can inspect the content that caused disagreement.
+</ResponseField>
+
+<ResponseField name="is_flagged" type="boolean">
+  `true` for all records returned by this endpoint.
+</ResponseField>
+
+<ResponseField name="confidence_score" type="number">
+  Claude's confidence that disagreement is significant (0.0–1.0).
+</ResponseField>
+
+<ResponseField name="rationale" type="string">
+  Claude's written explanation of why the item was flagged.
+</ResponseField>
+
+<ResponseField name="project_id" type="string">
+  Project UUID.
+</ResponseField>
+
+<ResponseField name="flagged_at" type="string">
+  ISO 8601 timestamp when the flag was last written.
+</ResponseField>
+
+### Curl example
+
+```bash
+curl http://localhost:8000/api/projects/proj-uuid-1/flags \
+  -H "Authorization: Bearer <token>"
+```
+
+```json
+[
+  {
+    "id": "flag-uuid-1",
+    "dataset_item_id": "item-internal-uuid",
+    "external_id": "item-001",
+    "item_data": {
+      "persona": "36-year-old Australian environmental lawyer",
+      "response": "Look, mate, we can't just bulldoze the heritage site..."
+    },
+    "is_flagged": true,
+    "confidence_score": 0.92,
+    "rationale": "Annotators scored 'Expected Action' as 1 and 5 respectively — a maximum disagreement. The response contains mixed signals about character motivation.",
+    "project_id": "proj-uuid-1",
+    "flagged_at": "2025-04-05T14:30:00"
+  }
+]
+```
+
+---
+
+## Trigger AI flagging analysis
+
+Run the AI flagging pipeline against all completed items in the project. For each item where all required annotations have been submitted, the system sends the schema and annotator responses to Claude. Claude returns a flag decision, confidence score, and rationale, which are stored in `ai_flags`.
+
+<Note>
+  This endpoint is referenced as `POST /api/projects/{id}/flags/analyze` in the API list. The AI flagging service must be configured with a valid `CLAUDE_API_KEY` environment variable for this endpoint to work.
+</Note>
+
+```http
+POST /api/projects/{project_id}/flags/analyze
+```
+
+**Authentication:** Required (Bearer token, `requester` role).
+
+### Path parameters
+
+<ParamField path="project_id" type="string" required>
+  Project UUID.
+</ParamField>
+
+### Response
+
+<ResponseField name="analyzed" type="number">
+  Number of items processed by the AI flagging pipeline.
+</ResponseField>
+
+<ResponseField name="flagged" type="number">
+  Number of items the AI marked as having significant annotator disagreement.
+</ResponseField>
+
+### Curl example
+
+```bash
+curl -X POST http://localhost:8000/api/projects/proj-uuid-1/flags/analyze \
+  -H "Authorization: Bearer <token>"
+```
+
+```json
+{ "analyzed": 10, "flagged": 3 }
+```

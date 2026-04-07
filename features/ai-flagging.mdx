@@ -1,0 +1,149 @@
+---
+title: "AI flagging"
+description: "Automatically detect and explain annotator disagreement using Claude AI"
+---
+
+AI flagging is Axiom's quality-control layer. After annotations are collected for an item, Axiom sends the annotation schema and all submitted responses to Claude, which decides whether the annotators disagreed significantly. Items where disagreement is detected are marked as flagged and surfaced in the **Results** tab for your review.
+
+<Note>
+  AI flagging requires a valid `CLAUDE_API_KEY` environment variable. Set it in your `.env` file before starting the application. Without it, calls to `POST /api/projects/{id}/flags/analyze` return a `400` error.
+
+  ```env
+  CLAUDE_API_KEY=sk-ant-...
+  ```
+</Note>
+
+## The flagging pipeline
+
+<Steps>
+  <Step title="Annotators submit their annotations">
+    Each annotator works through assigned items and submits their structured responses. A database trigger fires on each insert and marks the corresponding `annotation_tasks` row as `submitted`.
+  </Step>
+  <Step title="Check if all required annotations are collected">
+    Before calling the AI, Axiom checks that an item has at least two submitted annotations. Items with fewer than two annotations are skipped — you cannot measure disagreement from a single response.
+  </Step>
+  <Step title="Build and send the Claude prompt">
+    For each eligible item, Axiom constructs a prompt that includes:
+    - The raw item data (text, image URLs, or any JSON payload)
+    - The annotation schema field definitions
+    - All submitted annotations, labeled by annotator display name
+
+    The prompt instructs Claude to respond with a strict JSON object and nothing else.
+  </Step>
+  <Step title="Claude returns a structured verdict">
+    Claude responds with a JSON object containing three fields:
+
+    ```json
+    {
+      "flagged": true,
+      "confidence": 0.85,
+      "rationale": "Annotators scored 'Expected Action' as 1 and 5 respectively, indicating significant disagreement on the character's likely decision."
+    }
+    ```
+  </Step>
+  <Step title="Store the result in ai_flags">
+    Axiom upserts the result into the `ai_flags` table, keyed on `(project_id, dataset_item_id)`. Running analysis more than once overwrites the previous result with the latest verdict.
+  </Step>
+  <Step title="Review flagged items in the Results tab">
+    Open the **Results** tab in your project and switch to the **Flags** view. Flagged items are sorted by `confidence_score` descending so the most certain disagreements appear first.
+  </Step>
+</Steps>
+
+## The Claude prompt
+
+Axiom uses the `claude-sonnet-4-20250514` model. The prompt follows this structure:
+
+```text
+Analyze these human annotations for inter-annotator agreement.
+
+Item data: { "persona": "36-year-old Australian environmental lawyer", ... }
+
+Annotation schema:
+- linguistic_habits (likert): Linguistic Habits
+- persona_consistency (likert): Persona Consistency
+- expected_action (likert): Expected Action
+
+Submitted annotations:
+Annotator Alice: {"linguistic_habits": 4, "persona_consistency": 5, "expected_action": 1}
+Annotator Bob:   {"linguistic_habits": 3, "persona_consistency": 4, "expected_action": 5}
+
+Respond ONLY with valid JSON:
+{"flagged": true/false, "confidence": 0.0-1.0, "rationale": "brief explanation"}
+
+Flag as true if annotators significantly disagree on any field.
+Confidence = how certain you are there's a real disagreement (not just noise).
+```
+
+Claude is constrained to return only the JSON object. If the response cannot be parsed, Axiom stores `{ flagged: false, confidence: 0, rationale: "AI analysis failed" }` for that item and continues processing the rest.
+
+## Flag fields
+
+Each record in the `ai_flags` table represents one item's analysis result.
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `flagged` | boolean | `true` if Claude detected significant disagreement |
+| `confidence` | float (0–1) | How certain Claude is that the disagreement is meaningful, not noise |
+| `rationale` | string | Plain-language explanation of why the item was (or was not) flagged |
+| `model_version` | string | The Claude model used (`claude-sonnet-4-20250514`) |
+| `flagged_at` | timestamp | When the analysis was last run for this item |
+
+Items where `flagged` is `false` are still stored in `ai_flags` so you can distinguish "analyzed and clean" from "not yet analyzed."
+
+## Triggering analysis
+
+### From the UI
+
+Open the **Results** tab in your project, switch to the **Flags** view, and click **Analyze with AI**. The button triggers analysis for all items that do not yet have an `ai_flags` record.
+
+### From the API
+
+```bash
+curl -X POST https://your-axiom-host/api/projects/{id}/flags/analyze \
+  -H "Authorization: Bearer <JWT>"
+```
+
+The response reports how many items were analyzed and how many were flagged:
+
+```json
+{ "analyzed": 20, "flagged": 3 }
+```
+
+Items that already have an `ai_flags` record are skipped on subsequent runs. To re-analyze all items you must delete the existing flag records directly in the database.
+
+### Retrieve flagged items
+
+```bash
+curl https://your-axiom-host/api/projects/{id}/flags \
+  -H "Authorization: Bearer <JWT>"
+```
+
+Returns only items where `is_flagged = true`, sorted by `confidence_score` descending:
+
+```json
+[
+  {
+    "id": "...",
+    "project_id": "...",
+    "dataset_item_id": "...",
+    "is_flagged": true,
+    "confidence_score": 0.92,
+    "rationale": "Annotators scored 'Expected Action' as 1 and 5, a maximum Likert disagreement.",
+    "model_version": "claude-sonnet-4-20250514",
+    "flagged_at": "2024-03-15T10:23:41",
+    "item_data": { "persona": "...", "response": "..." },
+    "external_id": "item-042"
+  }
+]
+```
+
+## API reference
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| `POST` | `/api/projects/{id}/flags/analyze` | Run AI analysis on all un-analyzed items |
+| `GET` | `/api/projects/{id}/flags` | List items where `is_flagged = true` |
+
+<Warning>
+  AI flagging processes items sequentially and makes one Claude API call per item. For large datasets this can take several minutes and will consume API credits proportional to the number of items analyzed.
+</Warning>

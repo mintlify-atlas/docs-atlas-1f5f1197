@@ -1,0 +1,166 @@
+---
+title: "Export"
+description: "Download your labeled dataset"
+---
+
+The export endpoint streams your fully labeled dataset from the `v_annotation_export` view — a flattened join of dataset items, all annotation responses per annotator, and AI flag data. Every export call is recorded in the `export_log` audit table.
+
+Only requesters can export project data.
+
+<Tip>
+  The JSON export format is designed to feed directly into ML pipelines. Each record contains the original item data alongside all annotator responses, so you can aggregate, filter, or split labels without needing to rejoin tables.
+</Tip>
+
+---
+
+## Export dataset
+
+Stream the full labeled dataset for a project.
+
+```http
+GET /api/projects/{project_id}/export
+```
+
+**Authentication:** Required (Bearer token, `requester` role).
+
+### Path parameters
+
+<ParamField path="project_id" type="string" required>
+  Project UUID.
+</ParamField>
+
+### Query parameters
+
+<ParamField query="format" type="string" default="json">
+  Export format. Supported values:
+  - `json` — Returns a JSON array, `Content-Type: application/json`, downloaded as `axiom-export-{project_id}.json`
+  - `csv` — Returns a CSV file, `Content-Type: text/csv`, downloaded as `axiom-export-{project_id}.csv`
+</ParamField>
+
+### Response
+
+The response is a streaming download. Each record in the JSON array corresponds to one (item, annotator) annotation pairing from the `v_annotation_export` view.
+
+**Single exported record shape:**
+
+<ResponseField name="project_id" type="string">
+  Project UUID.
+</ResponseField>
+
+<ResponseField name="item_id" type="string">
+  Dataset item UUID.
+</ResponseField>
+
+<ResponseField name="external_id" type="string">
+  Item's original `_id` from the upload file, if provided.
+</ResponseField>
+
+<ResponseField name="item_data" type="object">
+  The full raw item JSON as uploaded.
+</ResponseField>
+
+<ResponseField name="annotator_id" type="string">
+  UUID of the annotator who submitted this record.
+</ResponseField>
+
+<ResponseField name="annotator_name" type="string">
+  Annotator's display name.
+</ResponseField>
+
+<ResponseField name="responses" type="object">
+  Key-value map of `field_key` → submitted value for this annotator's annotation.
+</ResponseField>
+
+<ResponseField name="submitted_at" type="string">
+  ISO 8601 timestamp of when this annotation was submitted.
+</ResponseField>
+
+<ResponseField name="ai_flagged" type="boolean">
+  Whether the item was flagged by the AI quality module, or `null` if not yet analyzed.
+</ResponseField>
+
+<ResponseField name="ai_confidence" type="number">
+  Claude's confidence score (0.0–1.0), or `null` if not analyzed.
+</ResponseField>
+
+<ResponseField name="ai_rationale" type="string">
+  Claude's written rationale for the flag, or `null` if not flagged.
+</ResponseField>
+
+### Example export record
+
+```json
+[
+  {
+    "project_id": "proj-uuid-1",
+    "item_id": "item-internal-uuid",
+    "external_id": "item-001",
+    "item_data": {
+      "persona": "36-year-old Australian environmental lawyer",
+      "environment": "Corporate boardroom negotiation",
+      "response": "Look, mate, we can't just bulldoze the heritage site..."
+    },
+    "annotator_id": "user-uuid-2",
+    "annotator_name": "Alice",
+    "responses": {
+      "linguistic_habits": 4,
+      "persona_consistency": 3,
+      "expected_action": 5,
+      "action_justification": 4,
+      "notes": "Character voice was mostly consistent."
+    },
+    "submitted_at": "2025-04-04T11:23:00",
+    "ai_flagged": true,
+    "ai_confidence": 0.92,
+    "ai_rationale": "Annotators scored 'Expected Action' as 1 and 5 respectively — maximum disagreement on a key field."
+  },
+  {
+    "project_id": "proj-uuid-1",
+    "item_id": "item-internal-uuid",
+    "external_id": "item-001",
+    "item_data": {
+      "persona": "36-year-old Australian environmental lawyer",
+      "environment": "Corporate boardroom negotiation",
+      "response": "Look, mate, we can't just bulldoze the heritage site..."
+    },
+    "annotator_id": "user-uuid-3",
+    "annotator_name": "Bob",
+    "responses": {
+      "linguistic_habits": 5,
+      "persona_consistency": 4,
+      "expected_action": 1,
+      "action_justification": 2,
+      "notes": "The decision felt out of character given the environmental context."
+    },
+    "submitted_at": "2025-04-04T12:05:00",
+    "ai_flagged": true,
+    "ai_confidence": 0.92,
+    "ai_rationale": "Annotators scored 'Expected Action' as 1 and 5 respectively — maximum disagreement on a key field."
+  }
+]
+```
+
+### Audit trail
+
+Each call to this endpoint inserts a row into `export_log` recording:
+- `project_id`
+- `requested_by` — the requester's user ID
+- `format` — `"json"` or `"csv"`
+- `row_count` — number of annotation records exported
+- `exported_at` — timestamp of the export
+
+### Curl example
+
+```bash
+curl "http://localhost:8000/api/projects/proj-uuid-1/export?format=json" \
+  -H "Authorization: Bearer <token>" \
+  -o axiom-export.json
+```
+
+To export as CSV:
+
+```bash
+curl "http://localhost:8000/api/projects/proj-uuid-1/export?format=csv" \
+  -H "Authorization: Bearer <token>" \
+  -o axiom-export.csv
+```

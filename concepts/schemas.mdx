@@ -1,0 +1,209 @@
+---
+title: "Annotation schemas"
+description: "Build custom annotation forms with Axiom's schema engine"
+---
+
+A schema is a set of field definitions that describe what questions an annotator must answer for each item in a project. Instead of hardcoding annotation types, you define schemas through the UI or API, and Axiom renders the correct form inputs at runtime.
+
+## How schemas work
+
+Each field definition is stored as a row in the `schema_fields` table. When an annotator opens a task, the backend fetches all `schema_fields` for that project (ordered by `position`) and sends them alongside the item data. The `DynamicAnnotationForm` component on the frontend reads this list and renders the appropriate input for each field type.
+
+This means you can build completely different annotation forms for each project — no code changes required.
+
+## Field definition structure
+
+Every field has the following attributes:
+
+| Attribute | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `field_key` | string | Yes | Machine-readable identifier used as the key in submitted responses |
+| `label` | string | Yes | Human-readable question label shown in the form |
+| `description` | string | No | Optional helper text displayed below the label |
+| `field_type` | string | Yes | One of `likert`, `boolean`, `free_text`, `multi_select` |
+| `is_required` | boolean | Yes | Whether the annotator must answer before submitting |
+| `position` | integer | Yes | Display order in the form (lower numbers appear first) |
+| `config` | object | No | Type-specific configuration (scale range, options list, etc.) |
+
+## Supported field types
+
+<Tabs>
+  <Tab title="likert">
+    A numeric scale with a configurable range. Renders as a row of buttons, one per point on the scale.
+
+    **Config options:**
+
+    | Key | Type | Description |
+    |-----|------|-------------|
+    | `min` | integer | Lowest value (default: `1`) |
+    | `max` | integer | Highest value (default: `5`) |
+    | `labels` | string[] | Optional endpoint labels, e.g. `["Strongly disagree", "Strongly agree"]` |
+
+    **Example field definition:**
+
+    ```json
+    {
+      "field_key": "persona_consistency",
+      "label": "Persona Consistency",
+      "description": "Does the response contradict the character biography?",
+      "field_type": "likert",
+      "config": { "min": 1, "max": 5, "labels": ["Not at all", "Completely"] },
+      "is_required": true
+    }
+    ```
+  </Tab>
+  <Tab title="boolean">
+    A yes/no choice rendered as two buttons. Submitted as `true` or `false`.
+
+    **Config options:** none required.
+
+    **Example field definition:**
+
+    ```json
+    {
+      "field_key": "contains_pii",
+      "label": "Contains PII?",
+      "description": "Does this item contain personally identifiable information?",
+      "field_type": "boolean",
+      "config": {},
+      "is_required": true
+    }
+    ```
+  </Tab>
+  <Tab title="free_text">
+    An open textarea for qualitative feedback. Submitted as a plain string.
+
+    **Config options:** none required.
+
+    **Example field definition:**
+
+    ```json
+    {
+      "field_key": "notes",
+      "label": "Qualitative Feedback",
+      "description": "Any additional observations about this item?",
+      "field_type": "free_text",
+      "config": {},
+      "is_required": false
+    }
+    ```
+  </Tab>
+  <Tab title="multi_select">
+    A set of predefined options where the annotator can select any number. Submitted as an array of strings.
+
+    **Config options:**
+
+    | Key | Type | Description |
+    |-----|------|-------------|
+    | `options` | string[] | The list of selectable values |
+
+    **Example field definition:**
+
+    ```json
+    {
+      "field_key": "sentiment_tags",
+      "label": "Sentiment tags",
+      "field_type": "multi_select",
+      "config": {
+        "options": ["positive", "negative", "neutral", "ambiguous"]
+      },
+      "is_required": true
+    }
+    ```
+  </Tab>
+</Tabs>
+
+## Complete schema example
+
+The following schema is from the AI persona evaluation use case described in the guide. It includes four Likert fields and one free-text field:
+
+```json
+{
+  "fields": [
+    {
+      "field_key": "linguistic_habits",
+      "label": "Linguistic Habits",
+      "description": "Does the agent use expected vocabulary?",
+      "field_type": "likert",
+      "config": { "min": 1, "max": 5 },
+      "is_required": true
+    },
+    {
+      "field_key": "persona_consistency",
+      "label": "Persona Consistency",
+      "description": "Does the response contradict the biography?",
+      "field_type": "likert",
+      "config": { "min": 1, "max": 5 },
+      "is_required": true
+    },
+    {
+      "field_key": "expected_action",
+      "label": "Expected Action",
+      "description": "Is the decision logical for this character?",
+      "field_type": "likert",
+      "config": { "min": 1, "max": 5 },
+      "is_required": true
+    },
+    {
+      "field_key": "action_justification",
+      "label": "Action Justification",
+      "description": "Does the explanation sound like the persona?",
+      "field_type": "likert",
+      "config": { "min": 1, "max": 5 },
+      "is_required": true
+    },
+    {
+      "field_key": "notes",
+      "label": "Qualitative Feedback",
+      "field_type": "free_text",
+      "config": {},
+      "is_required": false
+    }
+  ]
+}
+```
+
+## Managing schema fields
+
+Use the schema endpoints to add, update, and remove fields. All write operations are gated behind the `draft` status check — a database trigger blocks any modification on non-draft projects.
+
+```
+GET    /api/projects/{id}/schema          # list all fields
+POST   /api/projects/{id}/schema          # add a field
+PUT    /api/projects/{id}/schema/{fid}    # update a field
+DELETE /api/projects/{id}/schema/{fid}    # remove a field
+```
+
+<Warning>
+  Once a project moves out of `draft` status, schema modifications are blocked at the database level. Both `INSERT` and `UPDATE` operations on `schema_fields` will be rejected with a `400 Cannot modify schema of non-draft project` error. There is no way to unlock the schema without resetting the project status.
+</Warning>
+
+## Runtime rendering
+
+The `DynamicAnnotationForm` component receives the `schema_fields` array and renders each field in order:
+
+```typescript
+// Simplified from DynamicAnnotationForm.tsx
+fields.map((field) => {
+  if (field.field_type === "likert")       return <LikertField ... />;
+  if (field.field_type === "boolean")      return <BooleanField ... />;
+  if (field.field_type === "free_text")    return <FreeTextField ... />;
+  if (field.field_type === "multi_select") return <MultiSelectField ... />;
+})
+```
+
+Required fields are validated before the form submission is allowed. The annotator sees an inline error if they try to submit with a required field unanswered.
+
+When the form is submitted, responses are collected as a flat object keyed by `field_key`:
+
+```json
+{
+  "linguistic_habits": 4,
+  "persona_consistency": 3,
+  "expected_action": 5,
+  "action_justification": 3,
+  "notes": "The vocabulary felt slightly off for an Australian speaker."
+}
+```
+
+This object is stored in the `annotations.responses` column as JSON.

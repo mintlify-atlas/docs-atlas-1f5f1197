@@ -1,0 +1,90 @@
+---
+title: "Annotation flow"
+description: "How annotators work through tasks in Axiom"
+---
+
+Once a requester assigns tasks to a project, annotators can start working. Axiom guides you through items one at a time within each project, automatically advancing to the next item after each submission.
+
+## Task states
+
+Each annotation task moves through three states:
+
+| State | Meaning |
+|-------|---------|
+| `pending` | Assigned but not yet opened by the annotator |
+| `in_progress` | The annotator has opened the task |
+| `submitted` | The annotator submitted their annotation — terminal state |
+
+State transitions happen automatically. Opening a task sets it to `in_progress`; inserting an annotation record triggers the `trg_annotation_after_insert` trigger, which immediately sets the task to `submitted` and records the timestamp. You cannot un-submit a task.
+
+## The annotation flow
+
+<Steps>
+  <Step title="Open the task queue">
+    Navigate to `/annotate`. You see a list of projects you have been enrolled in and assigned tasks for. Each project card shows how many items remain and how many you have completed.
+
+    The queue is powered by `GET /api/tasks/projects`, which groups your pending and in-progress tasks by project and returns a `remaining_tasks` count for each.
+  </Step>
+  <Step title="Start a project">
+    Click a project card to enter sequential annotation mode at `/annotate/project/[projectId]`. Axiom immediately fetches your next item using:
+
+    ```
+    GET /api/tasks/projects/{pid}/next
+    ```
+
+    This endpoint returns the lowest-position pending or in-progress task for you in this project, along with the project's schema fields and your current progress (`progress_completed` / `progress_total`).
+  </Step>
+  <Step title="Review the item">
+    The item data is displayed above the annotation form. If the item JSON contains an image URL, `ItemDataRenderer` detects it and renders the image inline. Other fields — text, structured JSON — are displayed as formatted content.
+  </Step>
+  <Step title="Fill in the form">
+    The `DynamicAnnotationForm` renders a field for each entry in `schema_fields`, in position order. Fill in every required field (marked with a red asterisk). Trying to submit with a missing required field shows an inline validation error.
+  </Step>
+  <Step title="Submit and auto-advance">
+    Click **Submit Annotation**. The frontend sends:
+
+    ```
+    POST /api/tasks/{tid}/submit
+    {
+      "responses": {
+        "field_key_1": value,
+        "field_key_2": value
+      }
+    }
+    ```
+
+    The backend inserts a row into `annotations`. The `trg_annotation_after_insert` trigger marks the task `submitted`. The frontend then immediately calls `GET /api/tasks/projects/{pid}/next` again and renders the next item — no manual navigation required.
+
+    If there are no more items in the project, the endpoint returns `{ "done": true }` and the UI shows a completion message.
+  </Step>
+</Steps>
+
+## Image support
+
+Items whose data contains an image URL are detected automatically by the `ItemDataRenderer` component. The image is rendered inline above the annotation form so you can view it without leaving the page. This works for any field in `item_data` that resolves to a valid image URL.
+
+## Viewing a submitted task
+
+After submitting, you can return to any task in read-only mode by navigating to `/annotate/[taskId]`. The form is rendered with `readOnly={true}` — all your previous responses are displayed but cannot be changed.
+
+## Annotation history
+
+The `/annotate/history` page shows all tasks you have submitted, grouped by project. It is powered by:
+
+```
+GET /api/tasks/history/projects
+```
+
+Each project group shows the number of completed tasks and the date of your most recent submission. Click a project to browse the individual submitted tasks.
+
+<Tip>
+  Use the history view to revisit your earlier annotations before starting a new project — it helps calibrate your responses when working on similar tasks.
+</Tip>
+
+## What happens after you submit
+
+Your submission triggers a chain of automated actions on the backend:
+
+1. `trg_annotation_after_insert` marks your task as `submitted` and records `submitted_at`.
+2. `trg_annotation_check_completion` checks whether all tasks in the project are now `submitted`. If they are, it sets `projects.status = 'completed'` automatically.
+3. The requester can then trigger `POST /api/projects/{id}/flags/analyze` to run AI flagging on any items where annotators diverged.

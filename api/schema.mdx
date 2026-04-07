@@ -1,0 +1,256 @@
+---
+title: "Annotation schema"
+description: "Define annotation fields for a project"
+---
+
+The schema defines what annotators are asked when labeling an item. Each field is a row in `schema_fields` and corresponds to a rendered UI component (Likert scale, boolean toggle, text area, or multi-select). The frontend reads these rows at runtime and builds the form dynamically.
+
+<Note>
+  Schema fields can only be added, updated, or deleted while the project's status is `"draft"`. Once a project transitions to `"active"`, the schema is locked. This is enforced by database triggers.
+</Note>
+
+All schema endpoints require the `requester` role.
+
+---
+
+## Field types
+
+Axiom supports four field types for annotation forms:
+
+| Type | Description | Config keys |
+|------|-------------|-------------|
+| `likert` | Numeric scale (e.g., 1–5) | `min`, `max`, optional `labels` |
+| `boolean` | Yes/No toggle | _(no config required)_ |
+| `free_text` | Open-ended text area | optional `placeholder` |
+| `multi_select` | Select one or more from a list | `options` (array of strings) |
+
+### Config examples
+
+```json
+// likert — 1-to-5 scale
+{ "min": 1, "max": 5 }
+
+// likert — with labels
+{ "min": 1, "max": 5, "labels": { "1": "Strongly disagree", "5": "Strongly agree" } }
+
+// boolean — no config needed
+{}
+
+// free_text — with placeholder
+{ "placeholder": "Any additional observations..." }
+
+// multi_select — fixed option list
+{ "options": ["Fluent", "Grammatical errors", "Unnatural phrasing", "Off-topic"] }
+```
+
+---
+
+## List schema fields
+
+Return all fields defined for a project, ordered by `position`.
+
+```http
+GET /api/projects/{project_id}/schema
+```
+
+**Authentication:** Required (Bearer token, `requester` role).
+
+### Path parameters
+
+<ParamField path="project_id" type="string" required>
+  Project UUID.
+</ParamField>
+
+### Curl example
+
+```bash
+curl http://localhost:8000/api/projects/proj-uuid-1/schema \
+  -H "Authorization: Bearer <token>"
+```
+
+```json
+[
+  {
+    "id": "field-uuid-1",
+    "project_id": "proj-uuid-1",
+    "field_key": "linguistic_habits",
+    "label": "Linguistic Habits",
+    "description": "Does the agent use expected vocabulary?",
+    "field_type": "likert",
+    "is_required": true,
+    "position": 0,
+    "config": { "min": 1, "max": 5 }
+  }
+]
+```
+
+---
+
+## Add a field
+
+Add a new annotation field to the project schema.
+
+```http
+POST /api/projects/{project_id}/schema
+```
+
+**Authentication:** Required (Bearer token, `requester` role).
+
+### Path parameters
+
+<ParamField path="project_id" type="string" required>
+  Project UUID.
+</ParamField>
+
+### Request body
+
+<ParamField body="field_key" type="string" required>
+  Unique machine-readable key for this field within the project (e.g., `"linguistic_habits"`). Used as the key in annotation response objects.
+</ParamField>
+
+<ParamField body="label" type="string" required>
+  Human-readable label shown to annotators.
+</ParamField>
+
+<ParamField body="field_type" type="string" required>
+  One of `"likert"`, `"boolean"`, `"free_text"`, or `"multi_select"`.
+</ParamField>
+
+<ParamField body="config" type="object" default="{}">
+  Field-type-specific configuration. See [Field types](#field-types) above.
+</ParamField>
+
+<ParamField body="description" type="string">
+  Optional help text displayed below the field label.
+</ParamField>
+
+<ParamField body="is_required" type="boolean" default="true">
+  Whether annotators must provide a value for this field.
+</ParamField>
+
+<ParamField body="position" type="number" default="0">
+  Display order (ascending). Lower numbers appear first.
+</ParamField>
+
+### Response
+
+Returns the created field object.
+
+### Curl example
+
+```bash
+curl -X POST http://localhost:8000/api/projects/proj-uuid-1/schema \
+  -H "Authorization: Bearer <token>" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "field_key": "persona_consistency",
+    "label": "Persona Consistency",
+    "description": "Does the response contradict the biography?",
+    "field_type": "likert",
+    "config": { "min": 1, "max": 5 },
+    "is_required": true,
+    "position": 1
+  }'
+```
+
+```json
+{
+  "id": "field-uuid-2",
+  "project_id": "proj-uuid-1",
+  "field_key": "persona_consistency",
+  "label": "Persona Consistency",
+  "description": "Does the response contradict the biography?",
+  "field_type": "likert",
+  "is_required": true,
+  "position": 1,
+  "config": { "min": 1, "max": 5 }
+}
+```
+
+---
+
+## Update a field
+
+Partially update an existing schema field. All request body fields are optional.
+
+```http
+PUT /api/projects/{project_id}/schema/{field_id}
+```
+
+**Authentication:** Required (Bearer token, `requester` role).
+
+### Path parameters
+
+<ParamField path="project_id" type="string" required>
+  Project UUID.
+</ParamField>
+
+<ParamField path="field_id" type="string" required>
+  Schema field UUID.
+</ParamField>
+
+### Request body
+
+<ParamField body="label" type="string">
+  Updated label.
+</ParamField>
+
+<ParamField body="description" type="string">
+  Updated help text.
+</ParamField>
+
+<ParamField body="is_required" type="boolean">
+  Update required status.
+</ParamField>
+
+<ParamField body="position" type="number">
+  Updated display order.
+</ParamField>
+
+<ParamField body="config" type="object">
+  Updated field configuration.
+</ParamField>
+
+### Curl example
+
+```bash
+curl -X PUT http://localhost:8000/api/projects/proj-uuid-1/schema/field-uuid-2 \
+  -H "Authorization: Bearer <token>" \
+  -H "Content-Type: application/json" \
+  -d '{"label": "Persona Consistency (1-5)", "position": 0}'
+```
+
+---
+
+## Delete a field
+
+Remove a schema field. Only allowed while the project is in `"draft"` status.
+
+```http
+DELETE /api/projects/{project_id}/schema/{field_id}
+```
+
+**Authentication:** Required (Bearer token, `requester` role).
+
+### Path parameters
+
+<ParamField path="project_id" type="string" required>
+  Project UUID.
+</ParamField>
+
+<ParamField path="field_id" type="string" required>
+  Schema field UUID.
+</ParamField>
+
+### Response
+
+```json
+{ "deleted": true }
+```
+
+### Curl example
+
+```bash
+curl -X DELETE http://localhost:8000/api/projects/proj-uuid-1/schema/field-uuid-2 \
+  -H "Authorization: Bearer <token>"
+```

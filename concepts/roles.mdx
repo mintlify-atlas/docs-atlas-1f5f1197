@@ -1,0 +1,81 @@
+---
+title: "Roles"
+description: "Understand the Requester and Annotator roles in Axiom"
+---
+
+Every Axiom user has one of two roles: **Requester** or **Annotator**. Your role is chosen at registration and determines which parts of the platform you can access.
+
+<Tabs>
+  <Tab title="Requester">
+    A Requester is the researcher or developer who needs labeled data. You own projects from start to finish — defining what gets annotated, who annotates it, and what quality bar the results must meet.
+
+    **What you can do:**
+
+    - Create annotation projects with a title, description, deadline, and minimum annotations per item
+    - Define a custom annotation schema (Likert scales, boolean fields, free text, multi-select)
+    - Upload datasets as JSON files containing items to annotate
+    - Enroll annotators into a project and trigger round-robin task assignment
+    - Monitor project progress from the dashboard — completion percentage, flagged item count
+    - View inter-annotator agreement scores per schema field
+    - Review AI-flagged items where annotators diverged significantly
+    - Export the final labeled dataset as JSON
+
+    **Pages available to requesters:**
+
+    | Page | Purpose |
+    |------|---------|
+    | `/dashboard` | Project pipeline with progress stats |
+    | `/projects/new` | Create a project |
+    | `/projects/[id]` | Project hub with five management tabs |
+  </Tab>
+  <Tab title="Annotator">
+    An Annotator is the human labeler who provides ground-truth labels. You work through items assigned to you, submitting structured responses via a dynamic form.
+
+    **What you can do:**
+
+    - Browse your task queue, grouped by project, showing remaining and completed counts
+    - Open a project and annotate items sequentially — one item at a time, with auto-advance on submit
+    - See inline images when an item's data contains an image URL
+    - View past submissions in read-only mode
+    - Review your complete annotation history, grouped by project
+
+    **Pages available to annotators:**
+
+    | Page | Purpose |
+    |------|---------|
+    | `/annotate` | Project-grouped task queue |
+    | `/annotate/project/[projectId]` | Sequential annotation within a project |
+    | `/annotate/[taskId]` | Read-only view of a submitted task |
+    | `/annotate/history` | All completed annotations grouped by project |
+  </Tab>
+</Tabs>
+
+## How roles are assigned
+
+You select your role on the registration page. The role is stored on your user account and cannot be changed after registration.
+
+```
+POST /api/auth/register
+{
+  "email": "you@example.com",
+  "password": "...",
+  "role": "requester"   // or "annotator"
+}
+```
+
+The backend enforces role access on every protected endpoint. Requester-only routes (creating projects, modifying schemas, exporting data) return `403 Forbidden` if called by an annotator account, and vice versa.
+
+<Tip>
+  If you need to act as both a requester and an annotator — for example, when testing a project you created — register two separate accounts with different roles.
+</Tip>
+
+## Demo accounts
+
+The seed script pre-creates these accounts so you can explore both sides of the platform immediately:
+
+| Email | Password | Role |
+|-------|----------|------|
+| `demo@axiom.dev` | `password123` | Requester |
+| `ann1@axiom.dev` | `password123` | Annotator |
+| `ann2@axiom.dev` | `password123` | Annotator |
+| `ann3@axiom.dev` | `password123` | Annotator |

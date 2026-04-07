@@ -1,0 +1,217 @@
+---
+title: "Deployment"
+description: "Configure and deploy Axiom with Docker Compose"
+---
+
+Axiom ships as three Docker containers orchestrated by Docker Compose. This page covers the environment variables, service configuration, and commands you need to run Axiom in any environment.
+
+<Warning>
+  The default `JWT_SECRET` (`axiom-dev-secret-change-in-prod`) and any hardcoded database credentials are suitable for local development only. Change all secrets before deploying to a shared or production environment.
+</Warning>
+
+## Environment variables
+
+Create a `.env` file in the project root. Docker Compose reads this file automatically and substitutes values into the container environment.
+
+<CodeGroup>
+
+```bash Development (.env)
+# Database
+MYSQL_ROOT_PASSWORD=axiom_root
+MYSQL_DATABASE=axiom
+MYSQL_USER=axiom_user
+MYSQL_PASSWORD=axiom_pass
+
+# Authentication
+JWT_SECRET=axiom-dev-secret-change-in-prod
+
+# AI flagging (optional)
+CLAUDE_API_KEY=sk-ant-...
+```
+
+```bash Production (.env)
+# Database
+MYSQL_ROOT_PASSWORD=<strong-random-password>
+MYSQL_DATABASE=axiom
+MYSQL_USER=axiom_user
+MYSQL_PASSWORD=<strong-random-password>
+
+# Authentication
+JWT_SECRET=<long-random-secret>
+
+# AI flagging
+CLAUDE_API_KEY=sk-ant-...
+```
+
+</CodeGroup>
+
+### Variable reference
+
+| Variable              | Default                           | Required | Description                                                        |
+| --------------------- | --------------------------------- | -------- | ------------------------------------------------------------------ |
+| `MYSQL_ROOT_PASSWORD` | `axiom_root`                      | Yes      | Root password for the MySQL container.                             |
+| `MYSQL_DATABASE`      | `axiom`                           | Yes      | Name of the database created on first start.                       |
+| `MYSQL_USER`          | `axiom_user`                      | Yes      | Application database user.                                         |
+| `MYSQL_PASSWORD`      | `axiom_pass`                      | Yes      | Password for the application database user.                        |
+| `JWT_SECRET`          | `axiom-dev-secret-change-in-prod` | Yes      | Secret used to sign and verify JWT tokens. Change before deploying.|
+| `CLAUDE_API_KEY`      | _(empty)_                         | No       | Anthropic API key. Required only for the AI flagging feature.      |
+
+<Note>
+  The backend reads these variables via Pydantic settings (`config.py`). JWT tokens expire after 24 hours by default (`JWT_EXPIRE_HOURS=24`), and the signing algorithm is HS256 (`JWT_ALGORITHM=HS256`). These values are not currently exposed as environment variables but can be changed in `backend/app/config.py`.
+</Note>
+
+## Docker services
+
+Axiom runs three containers. Docker Compose manages startup order: MySQL must pass its health check before the backend starts, and the backend must be running before the frontend starts.
+
+### Frontend (`axiom-frontend`)
+
+| Property  | Value                      |
+| --------- | -------------------------- |
+| Image     | Built from `./frontend`    |
+| Port      | `3000:3000`                |
+| Env       | `NEXT_PUBLIC_API_URL=http://localhost:8000` |
+| Depends on | `backend`                 |
+
+The Next.js frontend is built at image-build time and served as a production Next.js server. The `NEXT_PUBLIC_API_URL` variable must point to the publicly reachable URL of the backend API. In a remote deployment, replace `localhost` with your server's hostname or IP.
+
+### Backend API (`axiom-backend`)
+
+| Property   | Value                                           |
+| ---------- | ----------------------------------------------- |
+| Image      | Built from `./backend`                          |
+| Port       | `8000:8000`                                     |
+| Env        | Database vars, `JWT_SECRET`, `CLAUDE_API_KEY`   |
+| Depends on | `mysql` (health check must pass)                |
+
+The FastAPI backend connects to MySQL using an async connection pool (`aiomysql`). It exposes interactive API documentation at `/docs` (Swagger UI) and `/redoc`. CORS is configured to allow requests from `http://localhost:3000` only — update `allow_origins` in `backend/app/main.py` for remote deployments.
+
+### MySQL (`axiom-mysql`)
+
+| Property | Value                              |
+| -------- | ---------------------------------- |
+| Image    | `mysql:8.0`                        |
+| Port     | `3306:3306`                        |
+| Volume   | `mysql_data` (named volume)        |
+| Init SQL | `schema.sql`, `procedures.sql`     |
+
+On first start, MySQL automatically runs the SQL files mounted at `/docker-entrypoint-initdb.d/`:
+
+1. `01-schema.sql` — creates all 12 tables, 4 triggers, and 3 views
+2. `02-procedures.sql` — creates the `sp_assign_tasks` and `sp_compute_agreement` stored procedures
+
+Data is persisted in the `mysql_data` named volume. Removing the container does not delete your data; you must explicitly remove the volume to reset the database.
+
+## docker-compose.yml
+
+The full service definitions for reference:
+
+```yaml docker-compose.yml
+version: "3.8"
+
+services:
+  mysql:
+    image: mysql:8.0
+    container_name: axiom-mysql
+    restart: unless-stopped
+    environment:
+      MYSQL_ROOT_PASSWORD: axiom_root
+      MYSQL_DATABASE: axiom
+      MYSQL_USER: axiom_user
+      MYSQL_PASSWORD: axiom_pass
+    ports:
+      - "3306:3306"
+    volumes:
+      - mysql_data:/var/lib/mysql
+      - ./backend/app/db/schema.sql:/docker-entrypoint-initdb.d/01-schema.sql
+      - ./backend/app/db/procedures.sql:/docker-entrypoint-initdb.d/02-procedures.sql
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  backend:
+    build: ./backend
+    container_name: axiom-backend
+    restart: unless-stopped
+    ports:
+      - "8000:8000"
+    environment:
+      DB_HOST: mysql
+      DB_PORT: 3306
+      DB_USER: axiom_user
+      DB_PASSWORD: axiom_pass
+      DB_NAME: axiom
+      JWT_SECRET: axiom-dev-secret-change-in-prod
+      CLAUDE_API_KEY: ${CLAUDE_API_KEY:-}
+    depends_on:
+      mysql:
+        condition: service_healthy
+
+  frontend:
+    build: ./frontend
+    container_name: axiom-frontend
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    environment:
+      NEXT_PUBLIC_API_URL: http://localhost:8000
+    depends_on:
+      - backend
+
+volumes:
+  mysql_data:
+```
+
+## Demo accounts
+
+The schema and stored procedures are loaded automatically on first start via the MySQL Docker entrypoint (`/docker-entrypoint-initdb.d/`). Demo accounts can be registered manually through the frontend at `http://localhost:3000/register`, or created directly via the API:
+
+```bash
+curl -X POST http://localhost:8000/api/auth/register \
+  -H "Content-Type: application/json" \
+  -d '{"email": "demo@axiom.dev", "password": "password123", "display_name": "Demo Requester", "role": "requester"}'
+```
+
+The README lists these suggested demo credentials:
+
+| Email            | Password    | Role       |
+| ---------------- | ----------- | ---------- |
+| demo@axiom.dev   | password123 | Requester  |
+| ann1@axiom.dev   | password123 | Annotator  |
+| ann2@axiom.dev   | password123 | Annotator  |
+| ann3@axiom.dev   | password123 | Annotator  |
+
+## Common commands
+
+```bash
+# Build images and start all services in the foreground
+docker-compose up --build
+
+# Start services without rebuilding (after first run)
+docker-compose up
+
+# Start services in the background
+docker-compose up -d
+
+# Stop all services and remove containers
+docker-compose down
+
+# Stop services and remove containers and volumes (resets the database)
+docker-compose down -v
+
+# Stream logs from all services
+docker-compose logs -f
+
+# Stream logs from a specific service
+docker-compose logs -f backend
+
+# Rebuild a single service
+docker-compose build backend
+docker-compose up -d --no-deps backend
+```
+
+<Tip>
+  Use `docker-compose logs -f backend` during development to watch backend startup and request logs without noise from the MySQL and frontend containers.
+</Tip>

@@ -1,0 +1,298 @@
+---
+title: "Projects"
+description: "Create and manage annotation projects"
+---
+
+Projects are the top-level container for an annotation workflow. A requester creates a project, defines its schema, uploads a dataset, enrolls annotators, and monitors progress — all scoped to the project.
+
+All project endpoints require a valid Bearer token. Most write endpoints are restricted to accounts with the `requester` role.
+
+---
+
+## List projects
+
+Return all projects associated with the authenticated user.
+
+- For **requesters**: returns projects they created, ordered by deadline.
+- For **annotators**: returns projects they are enrolled in.
+
+```http
+GET /api/projects
+```
+
+**Authentication:** Required (Bearer token, any role).
+
+### Curl example
+
+```bash
+curl http://localhost:8000/api/projects \
+  -H "Authorization: Bearer <token>"
+```
+
+```json
+[
+  {
+    "id": "proj-uuid-1",
+    "title": "Persona Consistency Study",
+    "status": "active",
+    "deadline": "2025-06-01",
+    "created_at": "2025-04-01T10:00:00"
+  }
+]
+```
+
+---
+
+## Create a project
+
+Create a new annotation project. Only requesters can create projects.
+
+```http
+POST /api/projects
+```
+
+**Authentication:** Required (Bearer token, `requester` role).
+
+### Request body
+
+<ParamField body="title" type="string" required>
+  Project name displayed in the dashboard.
+</ParamField>
+
+<ParamField body="description" type="string">
+  Optional description of the project's purpose.
+</ParamField>
+
+<ParamField body="deadline" type="string">
+  ISO 8601 date string (e.g., `"2025-06-01"`). Optional.
+</ParamField>
+
+<ParamField body="min_annotations_per_item" type="number" default="3">
+  How many annotators must label each item. Controls round-robin task assignment.
+</ParamField>
+
+### Response
+
+Returns the created project object.
+
+<ResponseField name="id" type="string">
+  Project UUID.
+</ResponseField>
+
+<ResponseField name="requester_id" type="string">
+  ID of the requester who created the project.
+</ResponseField>
+
+<ResponseField name="title" type="string">
+  Project title.
+</ResponseField>
+
+<ResponseField name="description" type="string">
+  Project description.
+</ResponseField>
+
+<ResponseField name="status" type="string">
+  Project lifecycle status. Starts as `"draft"`. Transitions: `draft` → `active` → `completed`.
+</ResponseField>
+
+<ResponseField name="min_annotations_per_item" type="number">
+  Number of annotators required per item.
+</ResponseField>
+
+<ResponseField name="deadline" type="string">
+  Deadline date, or `null`.
+</ResponseField>
+
+<ResponseField name="created_at" type="string">
+  ISO 8601 creation timestamp.
+</ResponseField>
+
+### Curl example
+
+```bash
+curl -X POST http://localhost:8000/api/projects \
+  -H "Authorization: Bearer <token>" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "title": "Persona Consistency Study",
+    "description": "Evaluate whether LLM agents stay in character.",
+    "deadline": "2025-06-01",
+    "min_annotations_per_item": 3
+  }'
+```
+
+```json
+{
+  "id": "proj-uuid-1",
+  "requester_id": "user-uuid-1",
+  "title": "Persona Consistency Study",
+  "description": "Evaluate whether LLM agents stay in character.",
+  "status": "draft",
+  "min_annotations_per_item": 3,
+  "deadline": "2025-06-01",
+  "created_at": "2025-04-01T10:00:00"
+}
+```
+
+---
+
+## Get project
+
+Fetch a single project by ID, including its schema fields.
+
+```http
+GET /api/projects/{project_id}
+```
+
+**Authentication:** Required (Bearer token, any role).
+
+### Path parameters
+
+<ParamField path="project_id" type="string" required>
+  Project UUID.
+</ParamField>
+
+### Response
+
+Returns the project object with an additional `schema_fields` array.
+
+<ResponseField name="id" type="string">
+  Project UUID.
+</ResponseField>
+
+<ResponseField name="title" type="string">
+  Project title.
+</ResponseField>
+
+<ResponseField name="status" type="string">
+  Project status: `"draft"`, `"active"`, or `"completed"`.
+</ResponseField>
+
+<ResponseField name="schema_fields" type="object[]">
+  Array of annotation field definitions for this project. See [Annotation schema](/api/schema) for the field shape.
+</ResponseField>
+
+### Curl example
+
+```bash
+curl http://localhost:8000/api/projects/proj-uuid-1 \
+  -H "Authorization: Bearer <token>"
+```
+
+---
+
+## Update a project
+
+Partially update project metadata. Only the project's requester can update it.
+
+```http
+PATCH /api/projects/{project_id}
+```
+
+**Authentication:** Required (Bearer token, `requester` role).
+
+### Path parameters
+
+<ParamField path="project_id" type="string" required>
+  Project UUID.
+</ParamField>
+
+### Request body
+
+All fields are optional. Only provided fields are updated.
+
+<ParamField body="title" type="string">
+  New project title.
+</ParamField>
+
+<ParamField body="description" type="string">
+  Updated description.
+</ParamField>
+
+<ParamField body="status" type="string">
+  New status. Use `"active"` to open the project for annotation, `"completed"` to close it.
+</ParamField>
+
+<ParamField body="min_annotations_per_item" type="number">
+  Updated annotation coverage requirement.
+</ParamField>
+
+<ParamField body="deadline" type="string">
+  Updated deadline (ISO 8601 date string).
+</ParamField>
+
+### Curl example
+
+```bash
+curl -X PATCH http://localhost:8000/api/projects/proj-uuid-1 \
+  -H "Authorization: Bearer <token>" \
+  -H "Content-Type: application/json" \
+  -d '{"status": "active"}'
+```
+
+---
+
+## Get project progress
+
+Return dashboard-level progress statistics for a project, sourced from the `v_project_progress` view.
+
+```http
+GET /api/projects/{project_id}/progress
+```
+
+**Authentication:** Required (Bearer token, any role).
+
+### Path parameters
+
+<ParamField path="project_id" type="string" required>
+  Project UUID.
+</ParamField>
+
+### Response
+
+<ResponseField name="project_id" type="string">
+  Project UUID.
+</ResponseField>
+
+<ResponseField name="title" type="string">
+  Project title.
+</ResponseField>
+
+<ResponseField name="total_tasks" type="number">
+  Total annotation tasks created for this project.
+</ResponseField>
+
+<ResponseField name="submitted" type="number">
+  Number of tasks with status `"submitted"`.
+</ResponseField>
+
+<ResponseField name="pending" type="number">
+  Number of tasks still pending or in progress.
+</ResponseField>
+
+<ResponseField name="completion_pct" type="number">
+  Percentage of tasks completed (`submitted / total_tasks * 100`).
+</ResponseField>
+
+<ResponseField name="flagged_count" type="number">
+  Number of items flagged by the AI quality module.
+</ResponseField>
+
+### Curl example
+
+```bash
+curl http://localhost:8000/api/projects/proj-uuid-1/progress \
+  -H "Authorization: Bearer <token>"
+```
+
+```json
+{
+  "project_id": "proj-uuid-1",
+  "title": "Persona Consistency Study",
+  "total_tasks": 30,
+  "submitted": 18,
+  "pending": 12,
+  "completion_pct": 60.0,
+  "flagged_count": 3
+}
+```

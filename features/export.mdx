@@ -1,0 +1,115 @@
+---
+title: "Exporting data"
+description: "Export your labeled dataset as JSON for ML training pipelines"
+---
+
+Once annotation is complete, you can export the full labeled dataset as a single JSON file. The export flattens items, annotations, and AI flag data into one record per annotator–item pair so it is immediately usable in ML training pipelines.
+
+<Tip>
+  Feed the exported JSON directly into your training pipeline as-is, or use the `is_flagged` field to filter out items where annotators disagreed before training. Keeping flagged items in a separate validation split is a common practice for evaluating label noise robustness.
+</Tip>
+
+## The export view
+
+Axiom exports data through the `v_annotation_export` database view, which joins:
+
+- `dataset_items` — the raw item data and external ID
+- `annotation_tasks` — the assignment record linking item to annotator
+- `annotations` — the submitted label responses (JSON)
+- `ai_flags` — the Claude flagging result for the item (if analysis has been run)
+- `users` — the annotator's display name and email
+
+The view produces one row per annotator per item, so an item annotated by three people appears as three rows in the export.
+
+## Export format
+
+Each record in the exported JSON array represents one annotation submission.
+
+```json
+[
+  {
+    "project_id": "a1b2c3d4-...",
+    "item_id": "e5f6g7h8-...",
+    "external_id": "item-001",
+    "item_data": {
+      "persona": "36-year-old Australian environmental lawyer",
+      "environment": "Corporate boardroom negotiation",
+      "response": "Look, mate, we can't just bulldoze the heritage site..."
+    },
+    "annotator_id": "u9v0w1x2-...",
+    "annotator_name": "Alice Chen",
+    "annotator_email": "alice@example.com",
+    "responses": {
+      "linguistic_habits": 4,
+      "persona_consistency": 5,
+      "expected_action": 2,
+      "notes": "Strong accent markers and domain vocabulary present."
+    },
+    "submitted_at": "2024-03-15T09:41:22",
+    "is_flagged": true,
+    "confidence_score": 0.85,
+    "rationale": "Annotators scored 'Expected Action' as 2 and 5 respectively, indicating significant disagreement."
+  }
+]
+```
+
+When AI flagging has not been run for a project, `is_flagged`, `confidence_score`, and `rationale` are `null` for all records.
+
+## Triggering an export
+
+### From the UI
+
+Open the **Results** tab in your project and click **Export JSON**. The browser downloads the file as `axiom-export-{project_id}.json`.
+
+### From the API
+
+```bash
+curl "https://your-axiom-host/api/projects/{id}/export?format=json" \
+  -H "Authorization: Bearer <JWT>" \
+  -o axiom-export.json
+```
+
+The endpoint streams the JSON file directly as a download with the `Content-Disposition: attachment` header.
+
+<CodeGroup>
+
+```bash JSON export
+curl "https://your-axiom-host/api/projects/{id}/export?format=json" \
+  -H "Authorization: Bearer <JWT>" \
+  -o axiom-export.json
+```
+
+```bash CSV export
+curl "https://your-axiom-host/api/projects/{id}/export?format=csv" \
+  -H "Authorization: Bearer <JWT>" \
+  -o axiom-export.csv
+```
+
+</CodeGroup>
+
+The `format` query parameter accepts `json` (default) or `csv`. JSON is preferred for ML pipelines because it preserves nested `item_data` and `responses` structures. CSV flattens everything into columns.
+
+## Export audit log
+
+Every export is recorded in the `export_log` table for auditing purposes.
+
+| Column | Description |
+|--------|-------------|
+| `project_id` | The project that was exported |
+| `requested_by` | The user ID of the requester who triggered the export |
+| `format` | `json` or `csv` |
+| `row_count` | Number of annotation rows included in the export |
+| `exported_at` | Timestamp of the export |
+
+The audit log is append-only — each export creates a new row regardless of whether the same requester has exported before.
+
+## API reference
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| `GET` | `/api/projects/{id}/export?format=json` | Download the labeled dataset as JSON |
+| `GET` | `/api/projects/{id}/export?format=csv` | Download the labeled dataset as CSV |
+
+<Warning>
+  The export endpoint returns a `404` error if no annotations have been submitted yet. Complete at least one annotation before attempting an export.
+</Warning>

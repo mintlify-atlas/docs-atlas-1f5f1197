@@ -1,0 +1,93 @@
+---
+title: "Task assignment"
+description: "Distribute annotation tasks to annotators with round-robin assignment"
+---
+
+Task assignment distributes your dataset items across enrolled annotators so that every item receives the required number of independent labels. Axiom uses a round-robin stored procedure to perform this distribution — you trigger it once from the **Annotators** tab and the system handles the rest.
+
+## How it works
+
+Axiom calls the `sp_assign_tasks` MySQL stored procedure when you trigger assignment. The procedure:
+
+1. Reads `min_annotations_per_item` from the project record (default `3`).
+2. Builds a randomized list of enrolled annotators.
+3. Iterates over every item in the project's datasets in position order.
+4. For each item, assigns annotators in round-robin order until the item has `min_annotations_per_item` distinct annotators.
+5. Skips any annotator already assigned to a given item to prevent duplicates.
+6. Skips items that already have enough assignments — re-running assignment is safe.
+
+The result is a set of rows in the `annotation_tasks` table, one per annotator–item pair.
+
+## Enrollment and assignment workflow
+
+<Steps>
+  <Step title="Open the Annotators tab">
+    Navigate to your project and click the **Annotators** tab in the project detail view.
+  </Step>
+  <Step title="Enroll annotators">
+    Enter an annotator's email address and click **Enroll**. The annotator must already have an Axiom account with the `annotator` role. Repeat for each annotator you want on this project.
+
+    You need at least as many annotators as `min_annotations_per_item` (default 3) or the assignment step will fail.
+  </Step>
+  <Step title="Trigger assignment">
+    Click **Assign Tasks**. This calls `POST /api/projects/{id}/annotators/assign`, which executes `sp_assign_tasks`. The response includes the total number of tasks created.
+
+    ```json
+    { "tasks_created": 45 }
+    ```
+  </Step>
+  <Step title="Annotators see their queue">
+    Enrolled annotators can now log in, open the **Annotate** section, and find their assigned items grouped by project. Items appear in the order they were uploaded.
+  </Step>
+</Steps>
+
+## The Annotators tab
+
+The **Annotators** tab in the project detail view gives you a live roster of enrolled annotators and their workload, powered by the `v_annotator_workload` view. For each annotator you can see:
+
+- Display name and email
+- Number of tasks assigned, completed, and remaining
+- Enrollment date
+
+You can remove an annotator from a project using the **Remove** action. Removing an annotator does not delete tasks that have already been submitted.
+
+## `min_annotations_per_item`
+
+This project-level setting controls how many distinct annotators label each item. The default is `3`.
+
+| Value | Effect |
+|-------|--------|
+| `1` | Each item is assigned to one annotator. Agreement scores and AI flagging are not meaningful with a single annotation. |
+| `3` (default) | Each item gets three independent annotations. This is the minimum recommended for reliable agreement measurement. |
+| `N` | You need at least `N` enrolled annotators for assignment to succeed. |
+
+Set `min_annotations_per_item` when creating or editing the project. The value is read at assignment time, so you can change it and re-run assignment to fill in gaps — the procedure skips items that already have enough annotations.
+
+## API reference
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| `GET` | `/api/projects/{id}/annotators` | List enrolled annotators and their workload |
+| `POST` | `/api/projects/{id}/annotators` | Enroll an annotator by email |
+| `DELETE` | `/api/projects/{id}/annotators/{annotator_id}` | Remove an annotator from the project |
+| `POST` | `/api/projects/{id}/annotators/assign` | Trigger round-robin task assignment |
+
+### Enroll an annotator
+
+```bash
+curl -X POST https://your-axiom-host/api/projects/{id}/annotators \
+  -H "Authorization: Bearer <JWT>" \
+  -H "Content-Type: application/json" \
+  -d '{ "annotator_email": "ann1@example.com" }'
+```
+
+### Trigger assignment
+
+```bash
+curl -X POST https://your-axiom-host/api/projects/{id}/annotators/assign \
+  -H "Authorization: Bearer <JWT>"
+```
+
+<Warning>
+  Assignment requires at least one annotator to be enrolled and at least one dataset item to be uploaded. If neither condition is met the API returns a `400` error with a descriptive message.
+</Warning>

@@ -1,0 +1,270 @@
+---
+title: "Datasets"
+description: "Upload and browse datasets for annotation"
+---
+
+A dataset is a named collection of items within a project. Each item is a JSON object — the content can be anything: text, image URLs, structured data, or a combination. The annotation form renders alongside the item data so annotators can see exactly what they're labeling.
+
+All dataset endpoints require the `requester` role.
+
+---
+
+## List datasets
+
+Return all datasets created for a project.
+
+```http
+GET /api/projects/{project_id}/datasets
+```
+
+**Authentication:** Required (Bearer token, `requester` role).
+
+### Path parameters
+
+<ParamField path="project_id" type="string" required>
+  Project UUID.
+</ParamField>
+
+### Curl example
+
+```bash
+curl http://localhost:8000/api/projects/proj-uuid-1/datasets \
+  -H "Authorization: Bearer <token>"
+```
+
+```json
+[
+  {
+    "id": "ds-uuid-1",
+    "project_id": "proj-uuid-1",
+    "name": "Batch 1 — April",
+    "created_at": "2025-04-01T10:00:00"
+  }
+]
+```
+
+---
+
+## Create a dataset
+
+Create a named dataset container within a project. After creating a dataset, upload items to it with the [upload endpoint](#upload-items).
+
+```http
+POST /api/projects/{project_id}/datasets
+```
+
+**Authentication:** Required (Bearer token, `requester` role).
+
+### Path parameters
+
+<ParamField path="project_id" type="string" required>
+  Project UUID.
+</ParamField>
+
+### Request body
+
+<ParamField body="name" type="string" required>
+  A human-readable name for this dataset batch (e.g., `"Batch 1 — April"`).
+</ParamField>
+
+### Response
+
+<ResponseField name="id" type="string">
+  Dataset UUID.
+</ResponseField>
+
+<ResponseField name="project_id" type="string">
+  Parent project UUID.
+</ResponseField>
+
+<ResponseField name="name" type="string">
+  Dataset name.
+</ResponseField>
+
+<ResponseField name="created_at" type="string">
+  ISO 8601 creation timestamp.
+</ResponseField>
+
+### Curl example
+
+```bash
+curl -X POST http://localhost:8000/api/projects/proj-uuid-1/datasets \
+  -H "Authorization: Bearer <token>" \
+  -H "Content-Type: application/json" \
+  -d '{"name": "Batch 1 — April"}'
+```
+
+---
+
+## Upload items
+
+Bulk-upload dataset items by posting a JSON file. The request body must be a **multipart form upload** containing a JSON file. The JSON file must contain an array of objects — each object becomes one annotation item.
+
+```http
+POST /api/projects/{project_id}/datasets/{dataset_id}/upload
+```
+
+**Authentication:** Required (Bearer token, `requester` role).
+
+### Path parameters
+
+<ParamField path="project_id" type="string" required>
+  Project UUID.
+</ParamField>
+
+<ParamField path="dataset_id" type="string" required>
+  Dataset UUID.
+</ParamField>
+
+### Form data
+
+<ParamField body="file" type="file" required>
+  A `.json` file containing an array of objects. Each object becomes one `dataset_item` row. If an object contains an `_id` or `external_id` key, it is stored as the item's `external_id` for cross-referencing.
+</ParamField>
+
+### Upload format
+
+Each element of the JSON array can contain any fields. Items with an `image_url` field render an inline image in the annotation view.
+
+```json
+[
+  {
+    "_id": "item-001",
+    "persona": "36-year-old Australian environmental lawyer",
+    "environment": "Corporate boardroom negotiation",
+    "response": "Look, mate, we can't just bulldoze the heritage site..."
+  },
+  {
+    "_id": "item-002",
+    "persona": "19-year-old competitive gamer from Seoul",
+    "environment": "Post-match interview",
+    "response": "The strat worked perfectly, I knew they'd misread the rotation."
+  }
+]
+```
+
+### Response
+
+<ResponseField name="uploaded" type="number">
+  Number of items successfully inserted.
+</ResponseField>
+
+### Curl example
+
+```bash
+# Save your data to a file first
+cat > items.json << 'EOF'
+[
+  {
+    "_id": "item-001",
+    "persona": "36-year-old Australian environmental lawyer",
+    "environment": "Corporate boardroom negotiation",
+    "response": "Look, mate, we can't just bulldoze the heritage site..."
+  }
+]
+EOF
+
+curl -X POST http://localhost:8000/api/projects/proj-uuid-1/datasets/ds-uuid-1/upload \
+  -H "Authorization: Bearer <token>" \
+  -F "file=@items.json"
+```
+
+```json
+{ "uploaded": 1 }
+```
+
+---
+
+## List items
+
+Browse items in a dataset with pagination.
+
+```http
+GET /api/projects/{project_id}/datasets/{dataset_id}/items
+```
+
+**Authentication:** Required (Bearer token, `requester` role).
+
+### Path parameters
+
+<ParamField path="project_id" type="string" required>
+  Project UUID.
+</ParamField>
+
+<ParamField path="dataset_id" type="string" required>
+  Dataset UUID.
+</ParamField>
+
+### Query parameters
+
+<ParamField query="page" type="number" default="1">
+  Page number (1-indexed).
+</ParamField>
+
+<ParamField query="size" type="number" default="50">
+  Items per page.
+</ParamField>
+
+### Response
+
+<ResponseField name="items" type="object[]">
+  Array of dataset item records for the current page.
+
+  <Expandable title="item properties">
+    <ResponseField name="id" type="string">
+      Item UUID (internal).
+    </ResponseField>
+    <ResponseField name="dataset_id" type="string">
+      Parent dataset UUID.
+    </ResponseField>
+    <ResponseField name="external_id" type="string">
+      Value from the original `_id` or `external_id` field, if provided.
+    </ResponseField>
+    <ResponseField name="item_data" type="object">
+      The JSON payload as uploaded (minus the `_id` / `external_id` key).
+    </ResponseField>
+    <ResponseField name="position" type="number">
+      Original order from the uploaded array.
+    </ResponseField>
+  </Expandable>
+</ResponseField>
+
+<ResponseField name="total" type="number">
+  Total number of items in the dataset.
+</ResponseField>
+
+<ResponseField name="page" type="number">
+  Current page number.
+</ResponseField>
+
+<ResponseField name="size" type="number">
+  Page size used.
+</ResponseField>
+
+### Curl example
+
+```bash
+curl "http://localhost:8000/api/projects/proj-uuid-1/datasets/ds-uuid-1/items?page=1&size=20" \
+  -H "Authorization: Bearer <token>"
+```
+
+```json
+{
+  "items": [
+    {
+      "id": "item-internal-uuid",
+      "dataset_id": "ds-uuid-1",
+      "external_id": "item-001",
+      "item_data": {
+        "persona": "36-year-old Australian environmental lawyer",
+        "environment": "Corporate boardroom negotiation",
+        "response": "Look, mate, we can't just bulldoze the heritage site..."
+      },
+      "position": 0
+    }
+  ],
+  "total": 1,
+  "page": 1,
+  "size": 20
+}
+```
